@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BDP Analyzer — LEO 通信品質モニタ</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#0f1420; --card:#1a2233; --fg:#e6ebf5; --muted:#8b98b0; --accent:#4da3ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:system-ui,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+    header { padding:14px 20px; background:var(--card); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+    header h1 { font-size:18px; margin:0; }
+    header .ctrl { margin-left:auto; display:flex; gap:10px; align-items:center; font-size:13px; color:var(--muted); }
+    select, input { background:#0c1119; color:var(--fg); border:1px solid #2a3550; border-radius:6px; padding:5px 8px; }
+    main { padding:20px; display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:18px; }
+    .card { background:var(--card); border-radius:12px; padding:16px; }
+    .card h2 { font-size:14px; margin:0 0 12px; color:var(--muted); font-weight:600; letter-spacing:.04em; text-transform:uppercase; }
+    .kpis { display:flex; gap:18px; flex-wrap:wrap; }
+    .kpi { min-width:110px; }
+    .kpi .v { font-size:26px; font-weight:700; }
+    .kpi .l { font-size:12px; color:var(--muted); }
+    .sat { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #232c40; }
+    .sat:last-child { border-bottom:none; }
+    .pill { font-size:11px; padding:2px 8px; border-radius:20px; background:#243352; color:var(--accent); }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { text-align:left; padding:6px 8px; border-bottom:1px solid #232c40; }
+    th { color:var(--muted); font-weight:600; }
+    tr.future td { color:var(--accent); }
+    .full { grid-column:1/-1; }
+    canvas { max-height:300px; }
+    .compass { width:150px; height:150px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🛰️ BDP Analyzer — LEO 通信品質モニタ</h1>
+    <div class="ctrl">
+      <label>RF ソース <select id="source"><option value="">(全て)</option></select></label>
+      <label>期間 <select id="minutes">
+        <option value="15">15分</option>
+        <option value="30" selected>30分</option>
+        <option value="60">60分</option>
+        <option value="180">3時間</option>
+      </select></label>
+      <span id="updated"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>現在の RF 状態</h2>
+      <div class="kpis" id="rfkpi"></div>
+    </section>
+
+    <section class="card">
+      <h2>接続中と推定される衛星 / 次のハンドオーバー</h2>
+      <div id="serving"></div>
+    </section>
+
+    <section class="card full">
+      <h2>SINR vs スループット</h2>
+      <canvas id="chSinrTp"></canvas>
+    </section>
+
+    <section class="card">
+      <h2>SINR vs RTT / ジッタ</h2>
+      <canvas id="chSinrRtt"></canvas>
+    </section>
+
+    <section class="card">
+      <h2>パケットロス</h2>
+      <canvas id="chLoss"></canvas>
+    </section>
+
+    <section class="card full">
+      <h2>ハンドオーバー予測タイムライン</h2>
+      <table id="hoTable">
+        <thead><tr><th>時刻</th><th>状態</th><th>系</th><th>from → to</th><th>理由</th><th>仰角</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+<script>
+const $ = s => document.querySelector(s);
+let charts = {};
+
+async function getJSON(url) { const r = await fetch(url); return r.json(); }
+function q() { return `minutes=${$('#minutes').value}` + ($('#source').value ? `&source=${encodeURIComponent($('#source').value)}` : ''); }
+function fmtTs(ts) { return new Date(ts*1000).toLocaleTimeString('ja-JP'); }
+function mbps(v) { return v==null ? '—' : (v/1e6).toFixed(1); }
+
+function lineChart(id, cfg) {
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart($(id), cfg);
+}
+
+async function refreshSources() {
+  const src = await getJSON('/api/sources');
+  const sel = $('#source'); const cur = sel.value;
+  sel.innerHTML = '<option value="">(全て)</option>' + src.map(s=>`<option>${s}</option>`).join('');
+  sel.value = cur;
+}
+
+async function refreshRF() {
+  const rf = await getJSON('/api/rf?'+q());
+  const last = rf[rf.length-1] || {};
+  const kpi = [
+    ['SINR', last.sinr_db!=null? last.sinr_db.toFixed(1):'—', 'dB'],
+    ['方位角', last.azimuth_deg!=null? last.azimuth_deg.toFixed(0):'—', '°'],
+    ['仰角', last.elevation_deg!=null? last.elevation_deg.toFixed(0):'—', '°'],
+    ['TX周波数', last.tx_freq_mhz!=null? last.tx_freq_mhz.toFixed(0):'—', 'MHz'],
+    ['障害物', last.obstruction_pct!=null? last.obstruction_pct.toFixed(1):'—', '%'],
+    ['端末遅延', last.latency_ms!=null? last.latency_ms.toFixed(0):'—', 'ms'],
+  ];
+  $('#rfkpi').innerHTML = kpi.map(k=>`<div class="kpi"><div class="v">${k[1]}<span style="font-size:13px;color:var(--muted)"> ${k[2]}</span></div><div class="l">${k[0]}</div></div>`).join('');
+  return rf;
+}
+
+async function refreshServing() {
+  const s = await getJSON('/api/serving');
+  const ho = await getJSON('/api/handovers?'+q());
+  const now = Date.now()/1000;
+  const nextByCon = {};
+  ho.filter(h=>h.ts>now).forEach(h=>{ if(!nextByCon[h.constellation]) nextByCon[h.constellation]=h; });
+  let html = '';
+  for (const con of ['starlink','oneweb']) {
+    const info = s[con];
+    if (!info) continue;
+    const nxt = nextByCon[con];
+    const lead = nxt ? `${Math.round(nxt.ts-now)}秒後` : '—';
+    html += `<div class="sat"><div><b>${con}</b> <span class="pill">可視 ${info.visible_count||0}</span><br>
+      <span style="color:var(--muted)">サービス衛星: ${info.satellite||'なし'} `+
+      (info.elevation_deg!=null?`(仰角 ${info.elevation_deg}°, 方位 ${info.azimuth_deg}°)`:'')+`</span></div>
+      <div style="text-align:right">次HO<br><b style="color:var(--accent)">${lead}</b></div></div>`;
+  }
+  $('#serving').innerHTML = html || '<span style="color:var(--muted)">予測データなし (skyfield 未導入 / TLE 取得待ち)</span>';
+
+  // タイムライン表
+  const tb = $('#hoTable tbody');
+  tb.innerHTML = ho.slice().reverse().slice(0,30).map(h=>`
+    <tr class="${h.future?'future':''}">
+      <td>${fmtTs(h.ts)}</td><td>${h.future?'予測':'記録'}</td><td>${h.constellation}</td>
+      <td>${h.from_sat||'—'} → ${h.to_sat||'—'}</td><td>${h.reason}</td>
+      <td>${h.from_elevation_deg??'—'} → ${h.to_elevation_deg??'—'}</td>
+    </tr>`).join('');
+}
+
+async function refreshCharts(rf) {
+  const corr = await getJSON('/api/correlation?'+q());
+  const net = await getJSON('/api/net?'+q());
+  const down = net.filter(n=>n.direction==='downlink');
+  const up = net.filter(n=>n.direction==='uplink');
+
+  const rfSinr = rf.filter(r=>r.sinr_db!=null).map(r=>({x:r.ts*1000,y:r.sinr_db}));
+
+  lineChart('#chSinrTp', { type:'line', options:baseOpts(['Mbps','SINR dB']), data:{ datasets:[
+    { label:'Down (Mbps)', yAxisID:'y', data:down.map(n=>({x:n.ts*1000,y:(n.throughput_bps||0)/1e6})), borderColor:'#4da3ff', tension:.2 },
+    { label:'Up (Mbps)', yAxisID:'y', data:up.map(n=>({x:n.ts*1000,y:(n.throughput_bps||0)/1e6})), borderColor:'#6de3a1', tension:.2 },
+    { label:'SINR (dB)', yAxisID:'y1', data:rfSinr, borderColor:'#ffb454', tension:.2 },
+  ]}});
+
+  lineChart('#chSinrRtt', { type:'line', options:baseOpts(['ms','SINR dB']), data:{ datasets:[
+    { label:'RTT (ms)', yAxisID:'y', data:down.map(n=>({x:n.ts*1000,y:n.rtt_ms})), borderColor:'#ff7a7a', tension:.2 },
+    { label:'Jitter (ms)', yAxisID:'y', data:down.map(n=>({x:n.ts*1000,y:n.jitter_ms})), borderColor:'#c58bff', tension:.2 },
+    { label:'SINR (dB)', yAxisID:'y1', data:rfSinr, borderColor:'#ffb454', tension:.2 },
+  ]}});
+
+  lineChart('#chLoss', { type:'line', options:baseOpts(['%']), data:{ datasets:[
+    { label:'Loss (%)', yAxisID:'y', data:down.map(n=>({x:n.ts*1000,y:n.loss_pct})), borderColor:'#ff7a7a', fill:true, backgroundColor:'rgba(255,122,122,.15)', tension:.2 },
+  ]}});
+}
+
+function baseOpts(axes) {
+  const o = { responsive:true, interaction:{mode:'index',intersect:false},
+    scales:{ x:{ type:'time'==='time'?'linear':'linear', ticks:{ color:'#8b98b0', callback:v=>new Date(v).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}) }, grid:{color:'#232c40'} },
+      y:{ position:'left', title:{display:true,text:axes[0],color:'#8b98b0'}, ticks:{color:'#8b98b0'}, grid:{color:'#232c40'} } },
+    plugins:{ legend:{ labels:{color:'#e6ebf5'} } } };
+  if (axes[1]) o.scales.y1 = { position:'right', title:{display:true,text:axes[1],color:'#8b98b0'}, ticks:{color:'#8b98b0'}, grid:{drawOnChartArea:false} };
+  return o;
+}
+
+async function refresh() {
+  await refreshSources();
+  const rf = await refreshRF();
+  await refreshCharts(rf);
+  await refreshServing();
+  $('#updated').textContent = '更新: ' + new Date().toLocaleTimeString('ja-JP');
+}
+
+$('#minutes').onchange = refresh;
+$('#source').onchange = refresh;
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

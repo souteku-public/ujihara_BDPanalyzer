@@ -1,0 +1,20 @@
+# --- Core (required) ---
+PyYAML>=6.0          # 設定ファイル読み込み
+Flask>=3.0           # Web ダッシュボード
+requests>=2.31       # Kymeta/Intellian WebGUI スクレイプ・TLE 取得
+
+# --- Optional (機能ごとに必要) ---
+# ハンドオーバー予測 (TLE + SGP4)。未インストールでも本体は起動します。
+skyfield>=1.48
+numpy>=1.24
+
+# Kymeta / Intellian の HTML 解析を厳密に行いたい場合 (無くても正規表現で動作)
+beautifulsoup4>=4.12
+
+# Intellian などが SNMP を提供する場合のみ
+pysnmp>=4.4
+
+# 注意:
+#   Starlink コレクタは `grpcurl` バイナリ (https://github.com/fullstorydev/grpcurl) を
+#   利用します。pip ではなく OS 側にインストールしてください。
+#   例) apt install grpcurl / brew install grpcurl / go install ...

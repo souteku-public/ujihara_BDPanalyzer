@@ -1,0 +1,101 @@
+# ============================================================================
+# BDP Analyzer 設定ファイル (config.yaml としてコピーして使用)
+# ============================================================================
+
+# 自局(地上局)の位置。ハンドオーバー予測とアンテナ向き検証に使用。
+ground_station:
+  name: "tokyo-office"
+  latitude: 35.6762        # 度 (北緯 +)
+  longitude: 139.6503      # 度 (東経 +)
+  altitude_m: 40           # 標高 [m]
+  elevation_mask_deg: 25   # この仰角未満は通信不可とみなす(ハンドオーバー判定に使用)
+
+# 保存先
+storage:
+  db_path: "data/bdp.sqlite"
+
+# ----------------------------------------------------------------------------
+# RF コレクタ (電波側メトリクス)。使う機器だけ enabled: true にする。
+# ----------------------------------------------------------------------------
+collectors:
+  # Starlink Mini: RF 用 WebGUI は無いが Dish の gRPC からメトリクス取得可能
+  - name: "starlink-mini-1"
+    kind: "starlink"
+    enabled: false
+    address: "192.168.100.1:9200"   # Dishy gRPC。ルータ経由なら要ルーティング
+    interval_s: 5
+    # grpcurl: "grpcurl"            # PATH に無い場合は絶対パスを指定
+
+  # Kymeta (OneWeb 運用): HTTPS WebGUI をスクレイプ。IP を指定するだけ。
+  - name: "kymeta-oneweb-1"
+    kind: "kymeta"
+    enabled: false
+    base_url: "https://192.168.1.50"   # 端末 WebGUI の IP
+    verify_tls: false                   # 自己署名証明書のことが多い
+    username: "admin"
+    password: "CHANGE_ME"
+    interval_s: 10
+    # WebGUI の JSON/HTML から値を拾うマッピング。機種・ファームで異なるので
+    # 実機に合わせて調整する (docs/devices.md 参照)。
+    endpoints:
+      status_json: "/api/status"        # JSON があればこちらを優先
+    field_map:
+      sinr_db: "rf.sinr"
+      azimuth_deg: "pointing.azimuth"
+      elevation_deg: "pointing.elevation"
+      tx_freq_mhz: "rf.tx_frequency_mhz"
+      rx_freq_mhz: "rf.rx_frequency_mhz"
+      satellite_id: "network.satellite"
+
+  # OneWeb Intellian OW11: 公開 API 非公開。LUI スクレイプ or SNMP を設定。
+  - name: "intellian-oneweb-1"
+    kind: "intellian"
+    enabled: false
+    base_url: "https://192.168.100.1"
+    verify_tls: false
+    interval_s: 10
+    # SNMP を使う場合 (機種が対応していれば):
+    snmp:
+      enabled: false
+      host: "192.168.100.1"
+      community: "public"
+      oids:                 # 実機の MIB に合わせる
+        sinr_db: "1.3.6.1.4.1.XXXXX.1"
+        elevation_deg: "1.3.6.1.4.1.XXXXX.2"
+
+# ----------------------------------------------------------------------------
+# インターネット通信品質測定
+#   本機で receiver(受信サーバ) を上げ、対向 PC の sender から測定する 2 台構成。
+#   1 台内ループバック測定も可能。
+# ----------------------------------------------------------------------------
+netqual:
+  enabled: true
+  role: "sender"            # "sender"(送信/測定主体) or "receiver"(対向サーバ)
+  peer_host: "203.0.113.10" # sender の場合: 対向 receiver の到達アドレス
+  control_port: 5301        # TCP: 制御 & スループット
+  udp_port: 5302            # UDP: ジッタ/RTT/ロス
+  interval_s: 30            # 測定周期
+  throughput_seconds: 5     # 1 回の TCP スループット測定時間
+  udp_probe_count: 200      # 1 回の UDP プローブ数
+  udp_probe_interval_ms: 20 # UDP プローブ送出間隔
+
+# ----------------------------------------------------------------------------
+# ハンドオーバー予測 (TLE + SGP4)
+# ----------------------------------------------------------------------------
+handover:
+  enabled: true
+  interval_s: 30
+  horizon_min: 15          # 何分先まで予測するか
+  constellations: ["starlink", "oneweb"]
+  tle_cache_hours: 6       # CelesTrak TLE キャッシュ有効期間
+  tle_sources:
+    starlink: "https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle"
+    oneweb:   "https://celestrak.org/NORAD/elements/gp.php?GROUP=oneweb&FORMAT=tle"
+
+# ----------------------------------------------------------------------------
+# Web ダッシュボード
+# ----------------------------------------------------------------------------
+webapp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080
