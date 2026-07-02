@@ -105,21 +105,51 @@ def _udp_echo_loop(port: int, stop: threading.Event) -> None:
     sock.close()
 
 
-def run_server(control_port: int, udp_port: int) -> None:
-    stop = threading.Event()
-    udp_thread = threading.Thread(target=_udp_echo_loop, args=(udp_port, stop),
-                                  daemon=True)
-    udp_thread.start()
+class NetqualServer:
+    """受信サーバをバックグラウンドで起動/停止できるようにしたもの.
 
-    tcp = _ThreadingTCP(("0.0.0.0", control_port), _ControlHandler)
-    log.info("TCP control listening on :%d", control_port)
+    統合エージェント(1 ソフトで送受兼用)から、ダッシュボードや測定ループと
+    並行して常駐させるために使う。
+    """
+
+    def __init__(self, control_port: int, udp_port: int):
+        self.control_port = control_port
+        self.udp_port = udp_port
+        self._stop = threading.Event()
+        self._tcp: _ThreadingTCP | None = None
+        self._threads: list[threading.Thread] = []
+
+    def start(self) -> None:
+        self._stop.clear()
+        ut = threading.Thread(target=_udp_echo_loop, args=(self.udp_port, self._stop),
+                              daemon=True)
+        ut.start()
+        self._threads.append(ut)
+
+        self._tcp = _ThreadingTCP(("0.0.0.0", self.control_port), _ControlHandler)
+        st = threading.Thread(target=self._tcp.serve_forever, daemon=True)
+        st.start()
+        self._threads.append(st)
+        log.info("netqual server listening: TCP :%d / UDP :%d",
+                 self.control_port, self.udp_port)
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._tcp is not None:
+            self._tcp.shutdown()
+
+
+def run_server(control_port: int, udp_port: int) -> None:
+    """フォアグラウンドで受信サーバを起動 (`receiver` サブコマンド用)."""
+    srv = NetqualServer(control_port, udp_port)
+    srv.start()
     try:
-        tcp.serve_forever()
+        while not srv._stop.is_set():
+            time.sleep(1)
     except KeyboardInterrupt:
         pass
     finally:
-        stop.set()
-        tcp.shutdown()
+        srv.stop()
 
 
 def main() -> None:

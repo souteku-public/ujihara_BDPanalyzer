@@ -22,7 +22,7 @@ Starlink Mini・OneWeb(Kymeta / Intellian)の**電波(RF)側メトリクス**と
 | スループット・ジッタ・RTT の測定 | **netqual**（送信/受信 2 台構成の自己完結測定） |
 | SINR との対比 | ダッシュボードの「SINR vs スループット / RTT・ジッタ」対比グラフ + `/api/correlation` |
 | 両衛星の状況表示 & ハンドオーバー予測 | **handover**（CelesTrak TLE + SGP4 で可視衛星とハンドオーバー時刻を予測） |
-| 送信側・受信側で別ソフト | `python -m bdp_analyzer sender` / `receiver` |
+| 送受 2 台での測定 | **送受兼用の 1 ソフト**（`role: both`）で双方向測定。役割分離（`sender`/`receiver`）も可 |
 
 ---
 
@@ -64,33 +64,38 @@ cp config.example.yaml config.yaml   # 環境に合わせて編集
 
 ---
 
-## 使い方（2 台構成）
+## 使い方
 
-インターネット越しに測定するため、**受信側**と**送信側**で役割を分けます。
+### 推奨: 送受兼用（1 ソフトを両 PC で実行）
 
-### ① 受信側 PC（対向サーバ）
-
-```bash
-python -m bdp_analyzer receiver --control-port 5301 --udp-port 5302
-```
-TCP 5301 / UDP 5302 を受信側に到達できるよう NAT/FW を開けてください。
-
-### ② 送信側 / メイン PC（測定 + ダッシュボード）
-
-`config.yaml` の `netqual.role: sender`・`peer_host: <受信側アドレス>` を設定し:
+`netqual.role: both`（既定）にすると、**1 プロセスが受信サーバを常駐しつつ、
+相手へ上り・下り両方向を能動測定**します。両 PC で同じコマンドを動かし、互いを
+`peer_host` に指定すれば対称な双方向測定になります。上り/下りは 1 回の測定で
+両方取得します（role に関係なく）。
 
 ```bash
-python -m bdp_analyzer monitor --config config.yaml
-# → http://localhost:8080/ でダッシュボード
+# PC-A の config.yaml:  netqual: { role: both, peer_host: "<PC-B の到達先>" }
+# PC-B の config.yaml:  netqual: { role: both, peer_host: "<PC-A の到達先>" }
+python -m bdp_analyzer monitor --config config.yaml   # 両 PC で実行
+# → 各 PC の http://localhost:8080/ でダッシュボード
 ```
 
 RF コレクタ・ネット品質測定・ハンドオーバー予測が定期実行され、SQLite に蓄積、
-ブラウザで対比表示されます。
+ブラウザで対比表示されます。TCP `control_port` / UDP `udp_port` を相手から到達
+できるよう NAT/FW を開けてください。
+
+### 役割を分けたい場合（従来どおりでも可）
+
+機能は同じですが、応答専用・測定専用に分けることもできます。
+```bash
+python -m bdp_analyzer receiver              # 応答専用 (role=receiver 相当)
+# もう一方で config の role: sender として monitor、または:
+python -m bdp_analyzer sender <相手host> --loop   # 単発/ループ測定を端末表示
+```
 
 ### 単発ツール
 
 ```bash
-python -m bdp_analyzer sender <受信側host> --loop      # 測定値を端末に表示
 python -m bdp_analyzer predict --config config.yaml    # ハンドオーバー予測を確認
 ```
 

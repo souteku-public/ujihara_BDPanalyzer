@@ -51,6 +51,7 @@ class Orchestrator:
         self.config = config
         self.storage = Storage(config.db_path)
         self.threads: List[_Periodic] = []
+        self.netqual_server = None  # 統合エージェント時の受信サーバ
         # 予測結果の最新スナップショット(ダッシュボードが参照)
         self.latest_serving: dict = {}
 
@@ -104,15 +105,28 @@ class Orchestrator:
                 f"rf:{col.name}", col.interval_s, lambda c=col: self._rf_job(c)))
             log.info("コレクタ有効化: %s (%s)", col.name, col.kind)
 
-        # ネット品質 (sender のみ測定を主導)
+        # ネット品質。1 ソフトで送受兼用(role=both)を既定とする。
+        #   - serve   : 受信サーバを常駐し、対向がこちらへ測定できるようにする
+        #   - measure : peer_host へこちらから能動測定(上り下り両方)を行う
+        # role: "both"(既定) / "sender"(測定のみ) / "receiver"(応答のみ)
         nq = self.config.netqual
-        if nq.get("enabled") and nq.get("role") == "sender":
-            if not nq.get("peer_host"):
-                log.error("netqual.role=sender だが peer_host が未設定です")
-            else:
+        if nq.get("enabled"):
+            role = nq.get("role", "both")
+            serve = nq.get("serve", role in ("both", "receiver"))
+            measure = role in ("both", "sender") and bool(nq.get("peer_host"))
+
+            if serve:
+                from .netqual.server import NetqualServer
+                self.netqual_server = NetqualServer(
+                    int(nq.get("control_port", 5301)), int(nq.get("udp_port", 5302)))
+                self.netqual_server.start()
+
+            if measure:
                 self.threads.append(_Periodic(
                     "netqual", float(nq.get("interval_s", 30)), self._netqual_job))
-                log.info("ネット品質測定(sender)有効化 → %s", nq.get("peer_host"))
+                log.info("ネット品質 能動測定(上り下り)有効化 → %s", nq.get("peer_host"))
+            elif role in ("both", "sender") and not nq.get("peer_host"):
+                log.warning("能動測定には peer_host が必要です(受信サーバのみ稼働)")
 
         # ハンドオーバー予測
         ho = self.config.handover
@@ -130,3 +144,5 @@ class Orchestrator:
     def stop(self) -> None:
         for t in self.threads:
             t.stop()
+        if self.netqual_server is not None:
+            self.netqual_server.stop()
