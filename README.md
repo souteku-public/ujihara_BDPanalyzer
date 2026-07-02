@@ -102,10 +102,18 @@ Enter** してください。
 
 **方法 A: ZIP でダウンロード（いちばん簡単・おすすめ）**
 1. ブラウザで本リポジトリの GitHub ページを開く。
-2. 緑色の「**< > Code**」ボタン →「**Download ZIP**」を押す。
-3. ダウンロードした ZIP を右クリック →「すべて展開」（Mac はダブルクリック）。
-4. 展開したフォルダ（`ujihara_BDPanalyzer` で始まる名前）を、
+2. **左上のブランチ選択ボタン（プルダウン）で、本ソフト一式が入っている
+   ブランチを選ぶ**（開発中は `claude/leo-satellite-quality-monitor-tzbskn`。
+   間違ったブランチのままだと README しか入っていない ZIP が落ちてきます）。
+   直接リンク:
+   <https://github.com/souteku-public/ujihara_BDPanalyzer/archive/refs/heads/claude/leo-satellite-quality-monitor-tzbskn.zip>
+3. 緑色の「**< > Code**」ボタン →「**Download ZIP**」を押す。
+4. ダウンロードした ZIP を右クリック →「すべて展開」（Mac はダブルクリック）。
+5. 展開したフォルダ（`ujihara_BDPanalyzer` で始まる名前）を、
    デスクトップなど分かりやすい場所に置く。
+   **フォルダの中に `requirements.txt` と `config.example.yaml` が見えていれば正解**です
+   （`collectors` や `model.py` が直接見えている場合は 1 階層内側に入りすぎです。
+   その外側のフォルダを使ってください）。
 
 **方法 B: git を使う（分かる方のみ）**
 ```bash
