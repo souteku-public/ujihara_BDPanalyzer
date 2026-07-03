@@ -93,6 +93,17 @@
     </section>
 
     <section class="card">
+      <h2>測定設定（時間解像度）</h2>
+      <div id="settings"></div>
+      <div class="hint">
+        各計測の<b>実行間隔</b>は「計測コントロール」の各行にある「間隔」欄で変更できます
+        (即時反映・保存)。ここでは測定 1 回あたりのパラメータを調整します。
+        通常測定の 1 サイクルは「スループット測定時間 × 2 + プローブ数 × 間隔」秒かかるため、
+        実行間隔はそれ以上にしてください (既定: 5×2+200×20ms = 約 14 秒 → 間隔 30 秒)。
+      </div>
+    </section>
+
+    <section class="card">
       <h2>ネットワーク情報</h2>
       <div id="netinfoAuto" class="hint" style="margin:0 0 10px"></div>
       <div class="addform" style="margin-top:0">
@@ -261,6 +272,9 @@ async function refreshCharts(rf) {
   const rows = net.filter(n=>shown.includes(n.session));
   const bySes = dir => s => rows.filter(n=>n.session===s && n.direction===dir);
   const pts = (arr, fn) => arr.map(n=>({x:n.ts*1000, y:fn(n)}));
+  // RTT/ロスは常時 RTT モニタ (direction='rtt', 1秒解像度) があればそちらを優先
+  const rttRows = s => { const c = bySes('rtt')(s);
+                         return c.length ? c : bySes('downlink')(s); };
 
   const rfSinr = rf.filter(r=>r.sinr_db!=null).map(r=>({x:r.ts*1000,y:r.sinr_db}));
   const sinrDs = { label:'SINR (dB)', yAxisID:'y1', data:rfSinr, borderColor:'#ffb454', tension:.2 };
@@ -275,23 +289,26 @@ async function refreshCharts(rf) {
 
   lineChart('#chSinrRtt', { type:'line', options:baseOpts(['ms','SINR dB']), data:{ datasets:[
     ...shown.flatMap(s => [
-      { label:`${s} RTT`, yAxisID:'y', data:pts(bySes('downlink')(s), n=>n.rtt_ms), borderColor:sessionColor(s), tension:.2 },
-      { label:`${s} Jitter`, yAxisID:'y', data:pts(bySes('downlink')(s), n=>n.jitter_ms), borderColor:sessionColor(s), borderDash:[6,4], tension:.2 },
+      { label:`${s} RTT`, yAxisID:'y', data:pts(rttRows(s), n=>n.rtt_ms), borderColor:sessionColor(s), tension:.2, pointRadius:0, borderWidth:1.5 },
+      { label:`${s} Jitter`, yAxisID:'y', data:pts(rttRows(s), n=>n.jitter_ms), borderColor:sessionColor(s), borderDash:[6,4], tension:.2, pointRadius:0, borderWidth:1.5 },
     ]),
     sinrDs,
   ]}});
 
   lineChart('#chLoss', { type:'line', options:baseOpts(['%']), data:{ datasets:
-    shown.map(s => ({ label:`${s} Loss`, yAxisID:'y', data:pts(bySes('downlink')(s), n=>n.loss_pct),
-                      borderColor:sessionColor(s), tension:.2 })),
+    shown.map(s => ({ label:`${s} Loss`, yAxisID:'y', data:pts(rttRows(s), n=>n.loss_pct),
+                      borderColor:sessionColor(s), tension:.2, pointRadius:0, borderWidth:1.5 })),
   }});
 }
 
 // ---- 計測コントロール ----------------------------------------------------
 const JOB_GROUPS = { rf:'電波 (RF) コレクタ', net:'通信品質 測定先',
+                     rttmon:'常時 RTT モニタ (1秒解像度)',
                      handover:'ハンドオーバー予測', server:'受信サーバ' };
 
 async function refreshJobs(jobs) {
+  // 間隔入力中に自動更新で消えないよう、フォーカスがある間は再描画しない
+  if (document.activeElement && $('#jobs').contains(document.activeElement)) return;
   jobs = jobs || await getJSON('/api/jobs');
   let html = '';
   for (const [kind, title] of Object.entries(JOB_GROUPS)) {
@@ -303,10 +320,44 @@ async function refreshJobs(jobs) {
           onchange="toggleJob('${j.id}', this.checked)"><span class="sl"></span></label>
         <span class="lbl">${j.label}</span>
         <span class="detail">${j.detail||''}</span>
+        ${j.interval_min!=null?`<span class="detail" title="${j.interval_hint||''}
+範囲: ${j.interval_min}〜${j.interval_max} 秒">間隔
+          <input type="number" value="${j.interval_s}" min="${j.interval_min}" max="${j.interval_max}"
+            style="width:60px" onchange="setJobInterval('${j.id}', this.value)">秒</span>`:''}
         ${j.removable?`<button class="del" title="削除" onclick="delTarget('${j.id}')">✕</button>`:''}
       </div>`).join('') + '</div>';
   }
   $('#jobs').innerHTML = html || '<span class="hint">ジョブがありません (config.yaml を確認)</span>';
+}
+
+async function setJobInterval(id, val) {
+  const r = await (await fetch(`/api/jobs/${encodeURIComponent(id)}/interval`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({interval_s: parseFloat(val)})})).json();
+  if (!r.ok) alert('変更できません: ' + (r.error||''));
+  refreshJobs();
+}
+
+// ---- 測定設定 (時間解像度) --------------------------------------------------
+let settingsLoaded = false;
+async function refreshSettings() {
+  if (settingsLoaded) return;   // 入力中の上書きを避けるため初回のみ描画
+  const s = await getJSON('/api/settings');
+  $('#settings').innerHTML = Object.entries(s).map(([k, v]) => `
+    <div class="job" style="flex-wrap:wrap">
+      <span class="lbl">${v.label}</span>
+      <input type="number" value="${v.value}" min="${v.min}" max="${v.max}"
+        style="width:80px" onchange="saveSetting('${k}', this.value)">
+      <span class="detail">${v.unit}</span>
+      <div class="hint" style="flex-basis:100%;margin:2px 0 0">
+        範囲: ${v.min}〜${v.max} ${v.unit} ／ 既定値: ${v.default} ${v.unit} — ${v.hint}</div>
+    </div>`).join('');
+  settingsLoaded = true;
+}
+async function saveSetting(key, val) {
+  await fetch('/api/settings', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({[key]: parseFloat(val)})});
 }
 
 async function toggleJob(id, enabled) {
@@ -442,6 +493,7 @@ async function refresh() {
   const jobs = await getJSON('/api/jobs');
   await refreshJobs(jobs);
   await refreshLoadTargets(jobs);
+  await refreshSettings();
   await refreshNetinfo();
   const rf = await refreshRF();
   await refreshCharts(rf);

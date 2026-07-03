@@ -31,7 +31,7 @@ net = pd.read_sql("SELECT * FROM net_samples", con, parse_dates={"ts": "s"})
 |---|---|---|---|
 | ts | REAL | epoch 秒 (UTC) | 測定時刻 |
 | session | TEXT | — | 測定先ラベル（例: `Starlink経由` / `社内有線LAN` / `Wi-Fi`）。**回線の区別はこの列だけ** |
-| direction | TEXT | `downlink` / `uplink` | 測定方向（測定主体から見て） |
+| direction | TEXT | `downlink` / `uplink` / `rtt` | 測定方向。`rtt` は**常時 RTT モニタ**（1 秒集計の往復測定、throughput は NULL） |
 | throughput_bps | REAL | bps | TCP スループット |
 | rtt_ms / rtt_min_ms / rtt_max_ms | REAL | ms | UDP エコーの往復遅延（平均/最小/最大） |
 | jitter_ms | REAL | ms | RFC3550 相当の平滑化ジッタ |
@@ -43,7 +43,7 @@ net = pd.read_sql("SELECT * FROM net_samples", con, parse_dates={"ts": "s"})
 | 列 | 型 | 単位/値 | 説明 |
 |---|---|---|---|
 | ts | REAL | epoch 秒 (UTC) | 取得時刻 |
-| source | TEXT | — | コレクタ名（config の `name`。例: `starlink-mini-1`） |
+| source | TEXT | — | コレクタ名（config の `name`。例: `starlink-mini-1`）。**`:1s` 付き（例: `starlink-mini-1:1s`）は get_history 由来の 1 秒解像度サンプル**（遅延・上下スループット・ドロップ率のみ、向き等は NULL） |
 | kind | TEXT | `starlink` / `kymeta` / `intellian` | 機器種別 |
 | sinr_db | REAL | dB | SINR/SNR（Starlink 新ファームは NULL） |
 | snr_above_noise | INTEGER | 0/1 | SNR がノイズフロア以上か（Starlink） |

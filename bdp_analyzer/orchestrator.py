@@ -55,6 +55,45 @@ def _slug(text: str) -> str:
     return re.sub(r"[^0-9A-Za-z぀-ヿ一-鿿_-]+", "-", text).strip("-")
 
 
+# 実行間隔の許容範囲 (秒)。UI にもこの値がメモとして表示される。
+INTERVAL_RANGES = {
+    "rf":       {"min": 1,  "max": 3600,
+                 "hint": "Starlink は 1 秒まで可 (get_history 併用で 1 秒解像度)。"
+                         "Kymeta/Intellian は端末 Web への負荷を考え 5 秒以上を推奨"},
+    "net":      {"min": 5,  "max": 3600,
+                 "hint": "1 サイクルに『スループット測定時間×2 + プローブ約 4 秒』"
+                         "かかるため、それより短くしても詰まるだけ"},
+    "handover": {"min": 10, "max": 3600,
+                 "hint": "TLE 伝搬計算の負荷と予測の鮮度のバランス。30 秒で十分なことが多い"},
+}
+
+# 測定パラメータの範囲・既定値 (UI の「測定設定」に表示されるメモの元データ)
+SETTINGS_SPEC = {
+    "throughput_seconds": {
+        "default": 5, "min": 1, "max": 30, "unit": "秒",
+        "label": "スループット測定時間 (1 方向あたり)",
+        "hint": "長いほど正確だが回線を占有する時間も伸びる。短周期監視なら 1〜3 秒"},
+    "udp_probe_count": {
+        "default": 200, "min": 10, "max": 1000, "unit": "個",
+        "label": "UDP プローブ数 (通常測定 1 回あたり)",
+        "hint": "多いほどロス率の分解能が上がる (200 個 → 0.5% 刻み)"},
+    "udp_probe_interval_ms": {
+        "default": 20, "min": 5, "max": 100, "unit": "ms",
+        "label": "UDP プローブ送出間隔 (通常測定)",
+        "hint": "count×interval が測定所要時間になる (200×20ms = 4 秒)"},
+    "rtt_probe_interval_ms": {
+        "default": 200, "min": 50, "max": 1000, "unit": "ms",
+        "label": "常時 RTT モニタ: プローブ間隔",
+        "hint": "200ms で帯域負荷 約 50kbps。細かくするほどロス検出が鋭くなる。"
+                "変更は該当モニタを OFF→ON した時に反映"},
+    "rtt_agg_seconds": {
+        "default": 1, "min": 1, "max": 60, "unit": "秒",
+        "label": "常時 RTT モニタ: 集計窓 (記録解像度)",
+        "hint": "1 秒 = 最高解像度。長期監視でデータ量を抑えたい場合は 5〜10 秒。"
+                "変更は該当モニタを OFF→ON した時に反映"},
+}
+
+
 class Orchestrator:
     def __init__(self, config: Config):
         self.config = config
@@ -71,6 +110,9 @@ class Orchestrator:
         self.net_profile: Dict[str, Any] = {}
         self._global_ip: Optional[str] = None
         self.load_status: Dict[str, Any] = {"running": False, "results": []}
+        # 測定パラメータの UI 上書き (SETTINGS_SPEC のキーのみ) と間隔上書き
+        self.tuning: Dict[str, float] = {}
+        self._interval_overrides: Dict[str, float] = {}
 
     # ---- UI 状態の永続化 ---------------------------------------------------
     def _load_state(self) -> Dict[str, Any]:
@@ -86,6 +128,9 @@ class Orchestrator:
             "targets": [j["meta"] for j in self.jobs.values()
                         if j["kind"] == "net" and j.get("removable")],
             "net_profile": self.net_profile,
+            "tuning": self.tuning,
+            "intervals": {jid: j["interval_s"] for jid, j in self.jobs.items()
+                          if j["kind"] in INTERVAL_RANGES},
         }
         try:
             with open(self._state_path, "w", encoding="utf-8") as fh:
@@ -95,20 +140,25 @@ class Orchestrator:
 
     # ---- 個別ジョブの中身 ---------------------------------------------------
     def _rf_job(self, collector):
-        s = collector.poll(time.time())
-        if s is not None:
+        for s in collector.poll_many(time.time()):
             self.storage.add_rf(s)
 
     def _net_defaults(self) -> Dict[str, Any]:
         nq = self.config.netqual
-        return {
+        d = {
             "control_port": int(nq.get("control_port", 5301)),
             "udp_port": int(nq.get("udp_port", 5302)),
             "interval_s": float(nq.get("interval_s", 30)),
             "throughput_seconds": float(nq.get("throughput_seconds", 5)),
             "udp_probe_count": int(nq.get("udp_probe_count", 200)),
             "udp_probe_interval_ms": float(nq.get("udp_probe_interval_ms", 20)),
+            "rtt_probe_interval_ms": 200.0,
+            "rtt_agg_seconds": 1.0,
         }
+        for k, v in self.tuning.items():     # UI での上書きを反映 (次回測定から有効)
+            if k in d:
+                d[k] = type(d[k])(v)
+        return d
 
     def _net_job(self, target: Dict[str, Any]):
         d = self._net_defaults()
@@ -157,6 +207,23 @@ class Orchestrator:
                 d = self._net_defaults()
                 self.netqual_server = NetqualServer(d["control_port"], d["udp_port"])
                 self.netqual_server.start()
+        elif j["kind"] == "rttmon":
+            if j["thread"] is None:
+                from .netqual import rttmon
+                d = self._net_defaults()
+                meta = j["meta"]
+                stop = threading.Event()
+                j["stop_evt"] = stop
+                j["thread"] = threading.Thread(
+                    target=rttmon.run_monitor, daemon=True, name=job_id,
+                    kwargs=dict(
+                        host=meta["host"],
+                        udp_port=int(meta.get("udp_port", d["udp_port"])),
+                        stop=stop, on_sample=self.storage.add_net,
+                        session=meta.get("label") or meta["host"],
+                        probe_interval_ms=d["rtt_probe_interval_ms"],
+                        agg_seconds=d["rtt_agg_seconds"]))
+                j["thread"].start()
         elif j["thread"] is None:
             j["thread"] = _Periodic(job_id, j["interval_s"], j["fn"])
             j["thread"].start()
@@ -168,19 +235,74 @@ class Orchestrator:
             if self.netqual_server is not None:
                 self.netqual_server.stop()
                 self.netqual_server = None
+        elif j["kind"] == "rttmon":
+            if j["thread"] is not None:
+                j["stop_evt"].set()
+                j["thread"] = None
         elif j["thread"] is not None:
             j["thread"].stop()
             j["thread"] = None
         j["enabled"] = False
 
     # ---- Web UI 向け公開 API -------------------------------------------------
-    def jobs_status(self) -> List[Dict[str, Any]]:
-        order = {"rf": 0, "net": 1, "handover": 2, "server": 3}
+    def set_job_interval(self, job_id: str, interval_s: float) -> Optional[str]:
+        """実行間隔を変更 (即時反映・保存)。エラー文字列を返す (None=成功)."""
         with self._lock:
-            rows = [{k: j[k] for k in
+            j = self.jobs.get(job_id)
+            if not j:
+                return "ジョブが見つかりません"
+            rng = INTERVAL_RANGES.get(j["kind"])
+            if rng is None:
+                return "このジョブの間隔は変更できません"
+            try:
+                iv = float(interval_s)
+            except (TypeError, ValueError):
+                return "数値で指定してください"
+            iv = min(max(iv, rng["min"]), rng["max"])
+            j["interval_s"] = iv
+            if j["thread"] is not None:      # 稼働中なら新しい間隔で再起動
+                j["thread"].stop()
+                j["thread"] = _Periodic(job_id, iv, j["fn"])
+                j["thread"].start()
+            self._save_state()
+            log.info("ジョブ %s の間隔を %.0f 秒に変更", job_id, iv)
+            return None
+
+    def get_settings(self) -> Dict[str, Any]:
+        """測定パラメータの現在値と範囲/既定値メモ (UI の「測定設定」用)."""
+        d = self._net_defaults()
+        out = {}
+        for key, spec in SETTINGS_SPEC.items():
+            out[key] = {**spec, "value": d.get(key, spec["default"])}
+        return out
+
+    def set_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            for key, spec in SETTINGS_SPEC.items():
+                if key not in data:
+                    continue
+                try:
+                    v = float(data[key])
+                except (TypeError, ValueError):
+                    continue
+                self.tuning[key] = min(max(v, spec["min"]), spec["max"])
+            self._save_state()
+        return self.get_settings()
+
+    def jobs_status(self) -> List[Dict[str, Any]]:
+        order = {"rf": 0, "net": 1, "rttmon": 2, "handover": 3, "server": 4}
+        with self._lock:
+            rows = []
+            for j in self.jobs.values():
+                r = {k: j[k] for k in
                      ("id", "label", "kind", "interval_s", "enabled",
                       "removable", "detail")}
-                    for j in self.jobs.values()]
+                rng = INTERVAL_RANGES.get(j["kind"])
+                if rng:                       # UI の間隔入力欄 (範囲メモ付き)
+                    r["interval_min"] = rng["min"]
+                    r["interval_max"] = rng["max"]
+                    r["interval_hint"] = rng["hint"]
+                rows.append(r)
         rows.sort(key=lambda r: (order.get(r["kind"], 9), r["label"]))
         return rows
 
@@ -196,14 +318,24 @@ class Orchestrator:
             log.info("ジョブ %s を %s", job_id, "開始" if enabled else "停止")
             return True
 
+    def _register_rttmon(self, slug: str, meta: Dict[str, Any],
+                         enabled: bool, removable: bool) -> None:
+        """net ターゲットに対応する常時 RTT モニタジョブを登録する."""
+        self._register(
+            f"rttmon:{slug}", label=meta.get("label") or meta.get("host", ""),
+            kind="rttmon", interval_s=0, fn=None,
+            enabled=enabled, removable=removable,
+            detail=f"→ {meta.get('host')} (1秒解像度)", meta=meta)
+
     def add_net_target(self, label: str, host: str, *, enabled: bool = True,
-                       **overrides) -> Optional[str]:
+                       rtt_enabled: bool = False, **overrides) -> Optional[str]:
         """UI から測定先を追加 (Ether/Wi-Fi チェック等)。job_id を返す."""
         label = (label or host).strip()
         host = host.strip()
         if not host:
             return None
-        job_id = f"net:{_slug(label)}"
+        slug = _slug(label)
+        job_id = f"net:{slug}"
         with self._lock:
             if job_id in self.jobs:
                 return None  # 同名は不可
@@ -215,6 +347,7 @@ class Orchestrator:
                 interval_s=float(meta.get("interval_s", d["interval_s"])),
                 fn=lambda t=meta: self._net_job(t),
                 enabled=enabled, removable=True, detail=f"→ {host}", meta=meta)
+            self._register_rttmon(slug, meta, rtt_enabled, removable=True)
             self._save_state()
         return job_id
 
@@ -225,6 +358,10 @@ class Orchestrator:
                 return False
             self._stop_job(job_id)
             del self.jobs[job_id]
+            sibling = "rttmon:" + job_id[len("net:"):]   # 対応する RTT モニタも削除
+            if sibling in self.jobs:
+                self._stop_job(sibling)
+                del self.jobs[sibling]
             self._save_state()
             return True
 
@@ -354,9 +491,14 @@ class Orchestrator:
         state = self._load_state()
         overrides: Dict[str, bool] = state.get("enabled", {})
         self.net_profile = dict(state.get("net_profile") or {})
+        self.tuning = dict(state.get("tuning") or {})
+        self._interval_overrides = dict(state.get("intervals") or {})
 
         def initial(job_id: str, default: bool) -> bool:
             return bool(overrides.get(job_id, default))
+
+        def interval(job_id: str, default: float) -> float:
+            return float(self._interval_overrides.get(job_id, default))
 
         # RF コレクタ: 設定にある全機器を登録 (enabled は初期状態、UI で切替可)
         for cfg in self.config.collectors:
@@ -367,7 +509,7 @@ class Orchestrator:
                 continue
             job_id = f"rf:{col.name}"
             self._register(job_id, label=col.name, kind="rf",
-                           interval_s=col.interval_s,
+                           interval_s=interval(job_id, col.interval_s),
                            fn=lambda c=col: self._rf_job(c),
                            enabled=initial(job_id, bool(cfg.get("enabled"))),
                            detail=cfg.get("kind", ""))
@@ -389,23 +531,35 @@ class Orchestrator:
                 targets = [{"label": nq["peer_host"], "host": nq["peer_host"]}]
             for t in targets:
                 label = t.get("label") or t.get("host", "")
-                job_id = f"net:{_slug(label)}"
+                slug = _slug(label)
+                job_id = f"net:{slug}"
                 d = self._net_defaults()
                 self._register(job_id, label=label, kind="net",
-                               interval_s=float(t.get("interval_s", d["interval_s"])),
+                               interval_s=interval(job_id, float(
+                                   t.get("interval_s", d["interval_s"]))),
                                fn=lambda tt=t: self._net_job(tt),
                                enabled=initial(job_id, measure_default
                                                and t.get("enabled", True)),
                                detail=f"→ {t.get('host')}", meta=dict(t))
+                self._register_rttmon(
+                    slug, dict(t),
+                    enabled=initial(f"rttmon:{slug}",
+                                    bool(t.get("rtt_monitor", False))),
+                    removable=False)
             # UI から追加された測定先を復元 (保存されていた ON/OFF 状態も引き継ぐ)
             for t in state.get("targets", []):
-                job_id = f"net:{_slug(t.get('label', ''))}"
+                slug = _slug(t.get("label", ""))
+                job_id = f"net:{slug}"
                 if job_id in self.jobs:
                     continue
                 self.add_net_target(t.get("label", ""), t.get("host", ""),
                                     enabled=initial(job_id, True),
+                                    rtt_enabled=initial(f"rttmon:{slug}", False),
                                     **{k: v for k, v in t.items()
                                        if k not in ("label", "host")})
+                if job_id in self.jobs and job_id in self._interval_overrides:
+                    self.jobs[job_id]["interval_s"] = interval(
+                        job_id, self.jobs[job_id]["interval_s"])
 
         # ハンドオーバー予測
         ho = self.config.handover
@@ -413,7 +567,8 @@ class Orchestrator:
             cache_dir = os.path.join(os.path.dirname(self.config.db_path) or ".", "tle")
             predictor = HandoverPredictor(ho, self.config.ground_station, cache_dir)
             self._register("handover", label="ハンドオーバー予測", kind="handover",
-                           interval_s=float(ho.get("interval_s", 30)),
+                           interval_s=interval("handover",
+                                               float(ho.get("interval_s", 30))),
                            fn=lambda p=predictor: self._handover_job(p),
                            enabled=initial("handover", bool(ho.get("enabled", True))),
                            detail="TLE+SGP4")

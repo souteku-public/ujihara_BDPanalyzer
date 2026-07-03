@@ -24,6 +24,8 @@ collectors:
     enabled: false
     address: "192.168.100.1:9200"   # Dishy gRPC。ルータ経由なら要ルーティング
     interval_s: 5
+    history: true                   # get_history で 1 秒解像度の履歴を差分回収
+                                    # (ソース名 <name>:1s として保存)
     # grpcurl: "grpcurl"            # PATH に無い場合は絶対パスを指定
 
   # Kymeta (OneWeb 運用): HTTPS WebGUI をスクレイプ。IP を指定するだけ。
@@ -93,6 +95,7 @@ netqual:
     - label: "Starlink経由"
       host: "203.0.113.10"     # 対向 PC の到達アドレス
       enabled: true
+      rtt_monitor: false       # true で常時 RTT モニタ (1 秒解像度) も起動
     - label: "社内有線LAN"
       host: "192.168.1.20"
       enabled: false           # UI から ON にするまで停止

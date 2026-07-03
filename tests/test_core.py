@@ -205,3 +205,105 @@ def test_csv_export():
         rf_csv = c.get("/export/rf.csv?minutes=60").data.decode("utf-8-sig")
         assert "starlink" in rf_csv and "7.5" in rf_csv
         assert c.get("/export/bad.csv").status_code == 404
+
+
+def test_starlink_history_diff_collection():
+    """Starlink get_history: 1 秒刻み履歴の差分回収 (grpcurl をモック)."""
+    from bdp_analyzer.collectors.starlink import StarlinkCollector
+
+    col = StarlinkCollector({"name": "sl", "interval_s": 5, "history": True})
+    ring = 900
+
+    def make(current):
+        return {"dishGetHistory": {
+            "current": current,
+            "popPingLatencyMs": [30.0] * ring,
+            "downlinkThroughputBps": [1e6] * ring,
+            "uplinkThroughputBps": [1e5] * ring,
+            "popPingDropRate": [0.0] * ring, "snr": [0] * ring}}
+
+    state = {"n": 0}
+
+    def fake(payload='{"get_status":{}}'):
+        if "get_status" in payload:
+            return {"dishGetStatus": {"state": "CONNECTED"}}
+        state["n"] += 1
+        return make(1000 if state["n"] == 1 else 1007)
+
+    col._run_grpcurl = fake
+    now = time.time()
+    h1 = [s for s in col.poll_many(now) if s.source == "sl:1s"]
+    assert len(h1) == 7                       # 初回 = interval_s + 2
+    h2 = [s for s in col.poll_many(now + 7) if s.source == "sl:1s"]
+    assert len(h2) == 7                       # current の増分 (1000→1007)
+    ts = [s.ts for s in h2]
+    assert all(abs((ts[i + 1] - ts[i]) - 1.0) < 0.01 for i in range(len(ts) - 1))
+    assert h2[-1].latency_ms == 30.0 and h2[-1].down_bps == 1e6
+
+
+def test_rtt_monitor_finalizes_while_running():
+    """常時 RTT モニタ: 停止を待たず稼働中に 1 秒窓が確定する (回帰テスト)."""
+    import threading
+    from bdp_analyzer.netqual.server import NetqualServer
+    from bdp_analyzer.netqual import rttmon
+
+    srv = NetqualServer(15721, 15722)
+    srv.start()
+    samples = []
+    stop = threading.Event()
+    t = threading.Thread(target=rttmon.run_monitor, daemon=True, kwargs=dict(
+        host="127.0.0.1", udp_port=15722, stop=stop, on_sample=samples.append,
+        session="lo", probe_interval_ms=100, agg_seconds=1))
+    try:
+        time.sleep(0.3)
+        t.start()
+        time.sleep(3.5)
+        n_running = len(samples)              # ← 停止前に確定していること
+        assert n_running >= 2, "稼働中に窓が確定していない"
+    finally:
+        stop.set()
+        t.join(timeout=2)
+        srv.stop()
+    assert all(s.direction == "rtt" for s in samples)
+    ok = [s for s in samples if s.rtt_ms is not None]
+    assert ok and all(s.loss_pct is not None and s.loss_pct < 50 for s in ok)
+
+
+def test_interval_and_settings_api():
+    """実行間隔の変更 (クランプ・永続化) と測定設定 API."""
+    from bdp_analyzer.config import Config, GroundStation
+    from bdp_analyzer.orchestrator import Orchestrator
+
+    with tempfile.TemporaryDirectory() as d:
+        def mkcfg():
+            return Config(raw={}, ground_station=GroundStation(),
+                          db_path=os.path.join(d, "t.sqlite"), collectors=[],
+                          netqual={"enabled": True, "role": "both",
+                                   "control_port": 15731, "udp_port": 15732,
+                                   "interval_s": 600,
+                                   "targets": [{"label": "lo",
+                                                "host": "127.0.0.1",
+                                                "enabled": False}]},
+                          handover={"enabled": False}, webapp={})
+        orch = Orchestrator(mkcfg())
+        orch.start()
+        try:
+            assert orch.set_job_interval("net:lo", 1) is None   # 下限 5 にクランプ
+            assert orch.jobs["net:lo"]["interval_s"] == 5
+            assert orch.set_job_interval("rttmon:lo", 10) is not None
+            orch.set_settings({"throughput_seconds": 999,
+                               "rtt_probe_interval_ms": 10})
+            s = orch.get_settings()
+            assert s["throughput_seconds"]["value"] == 30       # max クランプ
+            assert s["rtt_probe_interval_ms"]["value"] == 50    # min クランプ
+            assert s["rtt_agg_seconds"]["default"] == 1         # 既定値メモ
+        finally:
+            orch.stop()
+
+        orch2 = Orchestrator(mkcfg())
+        orch2.start()
+        try:
+            assert orch2.jobs["net:lo"]["interval_s"] == 5      # 再起動後も維持
+            assert orch2.get_settings()["throughput_seconds"]["value"] == 30
+        finally:
+            orch2.stop()

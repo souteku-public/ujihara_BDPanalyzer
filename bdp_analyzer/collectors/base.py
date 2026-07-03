@@ -26,6 +26,15 @@ class Collector:
     def poll(self, now: float) -> Optional[RFSample]:
         raise NotImplementedError
 
+    def poll_many(self, now: float) -> list:
+        """1 回のポーリングで複数サンプルを返すコレクタ用 (既定は poll を包む).
+
+        Starlink の get_history のように「前回以降の 1 秒刻み履歴」を
+        まとめて返す場合にオーバーライドする。
+        """
+        s = self.poll(now)
+        return [s] if s is not None else []
+
     def close(self) -> None:  # 任意
         pass
 

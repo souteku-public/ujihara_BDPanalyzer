@@ -89,6 +89,27 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
         ok = orchestrator.set_enabled(job_id, bool(body.get("enabled")))
         return jsonify({"ok": ok}), (200 if ok else 404)
 
+    @app.route("/api/jobs/<path:job_id>/interval", methods=["POST"])
+    def api_job_interval(job_id: str):
+        if orchestrator is None:
+            return jsonify({"ok": False, "error": "orchestrator なし"}), 400
+        body = request.get_json(force=True, silent=True) or {}
+        err = orchestrator.set_job_interval(job_id, body.get("interval_s"))
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        return jsonify({"ok": True})
+
+    @app.route("/api/settings")
+    def api_settings():
+        return jsonify(orchestrator.get_settings() if orchestrator else {})
+
+    @app.route("/api/settings", methods=["POST"])
+    def api_settings_save():
+        if orchestrator is None:
+            return jsonify({"ok": False}), 400
+        body = request.get_json(force=True, silent=True) or {}
+        return jsonify({"ok": True, "settings": orchestrator.set_settings(body)})
+
     @app.route("/api/targets", methods=["POST"])
     def api_target_add():
         if orchestrator is None:
