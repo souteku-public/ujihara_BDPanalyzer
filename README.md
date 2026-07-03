@@ -23,6 +23,8 @@ Starlink Mini・OneWeb(Kymeta / Intellian)の**電波(RF)側メトリクス**と
 | SINR との対比 | ダッシュボードの「SINR vs スループット / RTT・ジッタ」対比グラフ + `/api/correlation` |
 | 両衛星の状況表示 & ハンドオーバー予測 | **handover**（CelesTrak TLE + SGP4 で可視衛星とハンドオーバー時刻を予測） |
 | 送受 2 台での測定 | **送受兼用の 1 ソフト**（`role: both`）で双方向測定。役割分離（`sender`/`receiver`）も可 |
+| 計測の選択（全 LEO を同時接続しない運用） | ダッシュボードの**計測コントロール**で、機器・測定先・予測を個別に ON/OFF（再起動不要・状態は保存） |
+| Ether / Wi-Fi の品質チェック | 測定先をラベル付きで複数登録（UI から追加可）。衛星なしの LAN 相手でも同じ品質測定が可能 |
 
 ---
 
@@ -155,7 +157,7 @@ pip install -r requirements.txt
 | 場所 | 書き換える内容 |
 |---|---|
 | `ground_station:` の `latitude` / `longitude` | 測定場所のおおよその緯度・経度（Google マップで右クリックすると表示されます） |
-| `netqual:` の `peer_host` | **相手の PC** のアドレス（IP アドレスなど。相手 PC でも同様に、こちらの PC のアドレスを書く） |
+| `netqual:` の `targets:` | **相手の PC** のアドレスとラベル（相手 PC でも同様に、こちらの PC のアドレスを書く）。あとから画面上でも追加できるので、最初は空でも OK |
 | `collectors:` | 使うアンテナ（Starlink / Kymeta / Intellian）の項目だけ `enabled: true` にして、IP アドレスを実機のものにする |
 
 書き換えたら**上書き保存**してください。ほかの項目は最初はそのままで動きます。
@@ -228,6 +230,16 @@ python -m bdp_analyzer predict --config config.yaml    # ハンドオーバー�
 
 ## ダッシュボード
 
+- **計測コントロール**: 何を計測するかを画面上のトグルで選択。
+  - RF コレクタ（Starlink / Kymeta / Intellian）を機器ごとに ON/OFF
+    （全 LEO を同時接続しない運用に対応。config で `enabled: false` でも登録され、UI から起動可）
+  - 通信品質の**測定先を複数登録**（「Starlink経由」「社内LAN」「Wi-Fi」等のラベル付き）。
+    画面からホスト IP を入力して追加・削除も可能 →
+    **Ether / Wi-Fi だけの品質チェック**は、LAN 内の相手 PC で
+    `python -m bdp_analyzer receiver` を起動し、その IP を追加するだけ
+  - ハンドオーバー予測・受信サーバも ON/OFF 可
+  - 切替は即時反映・**再起動不要**。状態は保存され再起動後も引き継ぎ
+    （`config.yaml` は書き換えません）
 - **現在の RF 状態**: SINR / 方位角 / 仰角 / 周波数 / 障害物 / 端末遅延
 - **SINR vs スループット**、**SINR vs RTT・ジッタ**: 電波品質と通信品質の対比(二軸)
 - **パケットロス**の推移

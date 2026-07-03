@@ -77,13 +77,30 @@ netqual:
   enabled: true
   role: "both"              # "both"(送受兼用) / "sender"(測定のみ) / "receiver"(応答のみ)
   serve: true               # 受信サーバを常駐するか (未指定なら role から自動)
-  peer_host: "203.0.113.10" # 対向 PC の到達アドレス (both/sender で必須)
   control_port: 5301        # TCP: 制御 & スループット
   udp_port: 5302            # UDP: ジッタ/RTT/ロス
-  interval_s: 30            # 測定周期
+  interval_s: 30            # 測定周期 (targets 側で個別上書き可)
   throughput_seconds: 5     # 1 回の TCP スループット測定時間
   udp_probe_count: 200      # 1 回の UDP プローブ数
   udp_probe_interval_ms: 20 # UDP プローブ送出間隔
+
+  # 測定先は複数登録でき、ラベル別にグラフ表示される。
+  # Web UI (計測コントロール) からも追加/削除/ON・OFF できるので、
+  # ここには常用の測定先だけ書けばよい。
+  # 衛星なしの Ether / Wi-Fi 品質チェックも、LAN 内の相手 PC で
+  # `python -m bdp_analyzer receiver` を起動して host に指定するだけ。
+  targets:
+    - label: "Starlink経由"
+      host: "203.0.113.10"     # 対向 PC の到達アドレス
+      enabled: true
+    - label: "社内有線LAN"
+      host: "192.168.1.20"
+      enabled: false           # UI から ON にするまで停止
+    # - label: "Wi-Fi"
+    #   host: "192.168.1.30"
+    #   interval_s: 10
+
+  # (旧形式) peer_host: "203.0.113.10" も引き続き使用可 (targets が無い場合のみ)
 
 # ----------------------------------------------------------------------------
 # ハンドオーバー予測 (TLE + SGP4)

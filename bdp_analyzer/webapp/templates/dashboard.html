@@ -30,6 +30,28 @@
     .full { grid-column:1/-1; }
     canvas { max-height:300px; }
     .compass { width:150px; height:150px; }
+    /* 計測コントロール */
+    .jobgroup { margin-bottom:10px; }
+    .jobgroup .gt { font-size:12px; color:var(--muted); margin:6px 0 4px; }
+    .job { display:flex; align-items:center; gap:10px; padding:6px 8px;
+           border-radius:8px; }
+    .job:hover { background:#212b42; }
+    .job .lbl { flex:1; }
+    .job .detail { color:var(--muted); font-size:12px; }
+    .job .del { cursor:pointer; color:var(--muted); border:none; background:none; font-size:14px; }
+    .job .del:hover { color:#ff7a7a; }
+    .switch { position:relative; width:38px; height:20px; flex:none; }
+    .switch input { opacity:0; width:0; height:0; }
+    .switch .sl { position:absolute; inset:0; background:#2a3550; border-radius:20px; transition:.15s; cursor:pointer; }
+    .switch .sl:before { content:""; position:absolute; width:14px; height:14px; left:3px; top:3px;
+                         background:#8b98b0; border-radius:50%; transition:.15s; }
+    .switch input:checked + .sl { background:var(--accent); }
+    .switch input:checked + .sl:before { transform:translateX(18px); background:#fff; }
+    .addform { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+    .addform input { flex:1; min-width:120px; }
+    .addform button { background:var(--accent); color:#0b1220; border:none;
+                      border-radius:6px; padding:6px 12px; font-weight:600; cursor:pointer; }
+    .hint { color:var(--muted); font-size:12px; margin-top:8px; line-height:1.5; }
   </style>
 </head>
 <body>
@@ -37,6 +59,7 @@
     <h1>🛰️ BDP Analyzer — LEO 通信品質モニタ</h1>
     <div class="ctrl">
       <label>RF ソース <select id="source"><option value="">(全て)</option></select></label>
+      <label>測定先 <select id="netsession"><option value="">(全て)</option></select></label>
       <label>期間 <select id="minutes">
         <option value="15">15分</option>
         <option value="30" selected>30分</option>
@@ -48,6 +71,21 @@
   </header>
 
   <main>
+    <section class="card">
+      <h2>計測コントロール</h2>
+      <div id="jobs"></div>
+      <div class="addform">
+        <input id="tLabel" placeholder="ラベル (例: 社内LAN / Wi-Fi)">
+        <input id="tHost" placeholder="相手ホスト (IPアドレス)">
+        <button onclick="addTarget()">＋ 測定先を追加</button>
+      </div>
+      <div class="hint">
+        Ether / Wi-Fi など衛星なしの品質チェック: 相手 PC で
+        <code>python -m bdp_analyzer receiver</code> を起動し、その IP を上で追加。
+        トグルの ON/OFF は即時反映され、再起動後も保持されます。
+      </div>
+    </section>
+
     <section class="card">
       <h2>現在の RF 状態</h2>
       <div class="kpis" id="rfkpi"></div>
@@ -147,29 +185,96 @@ async function refreshServing() {
     </tr>`).join('');
 }
 
+// 測定先(セッション)ごとの色。SINR は常に橙(#ffb454)で重ね描き。
+const SESSION_COLORS = ['#4da3ff','#6de3a1','#c58bff','#5ce1e6','#ff9e64','#7aa2f7','#f7768e'];
+const sessionColor = (() => { const m = {}; let i = 0;
+  return s => (m[s] ??= SESSION_COLORS[i++ % SESSION_COLORS.length]); })();
+
 async function refreshCharts(rf) {
-  const corr = await getJSON('/api/correlation?'+q());
   const net = await getJSON('/api/net?'+q());
-  const down = net.filter(n=>n.direction==='downlink');
-  const up = net.filter(n=>n.direction==='uplink');
+  const selected = $('#netsession').value;
+
+  // 測定先セレクタを更新 (選択は維持)
+  const sessions = [...new Set(net.map(n=>n.session))];
+  const sel = $('#netsession');
+  sel.innerHTML = '<option value="">(全て)</option>' + sessions.map(s=>`<option>${s}</option>`).join('');
+  sel.value = sessions.includes(selected) ? selected : '';
+
+  const shown = sel.value ? sessions.filter(s=>s===sel.value) : sessions;
+  const rows = net.filter(n=>shown.includes(n.session));
+  const bySes = dir => s => rows.filter(n=>n.session===s && n.direction===dir);
+  const pts = (arr, fn) => arr.map(n=>({x:n.ts*1000, y:fn(n)}));
 
   const rfSinr = rf.filter(r=>r.sinr_db!=null).map(r=>({x:r.ts*1000,y:r.sinr_db}));
+  const sinrDs = { label:'SINR (dB)', yAxisID:'y1', data:rfSinr, borderColor:'#ffb454', tension:.2 };
 
   lineChart('#chSinrTp', { type:'line', options:baseOpts(['Mbps','SINR dB']), data:{ datasets:[
-    { label:'Down (Mbps)', yAxisID:'y', data:down.map(n=>({x:n.ts*1000,y:(n.throughput_bps||0)/1e6})), borderColor:'#4da3ff', tension:.2 },
-    { label:'Up (Mbps)', yAxisID:'y', data:up.map(n=>({x:n.ts*1000,y:(n.throughput_bps||0)/1e6})), borderColor:'#6de3a1', tension:.2 },
-    { label:'SINR (dB)', yAxisID:'y1', data:rfSinr, borderColor:'#ffb454', tension:.2 },
+    ...shown.flatMap(s => [
+      { label:`${s} Down`, yAxisID:'y', data:pts(bySes('downlink')(s), n=>(n.throughput_bps||0)/1e6), borderColor:sessionColor(s), tension:.2 },
+      { label:`${s} Up`, yAxisID:'y', data:pts(bySes('uplink')(s), n=>(n.throughput_bps||0)/1e6), borderColor:sessionColor(s), borderDash:[6,4], tension:.2 },
+    ]),
+    sinrDs,
   ]}});
 
   lineChart('#chSinrRtt', { type:'line', options:baseOpts(['ms','SINR dB']), data:{ datasets:[
-    { label:'RTT (ms)', yAxisID:'y', data:down.map(n=>({x:n.ts*1000,y:n.rtt_ms})), borderColor:'#ff7a7a', tension:.2 },
-    { label:'Jitter (ms)', yAxisID:'y', data:down.map(n=>({x:n.ts*1000,y:n.jitter_ms})), borderColor:'#c58bff', tension:.2 },
-    { label:'SINR (dB)', yAxisID:'y1', data:rfSinr, borderColor:'#ffb454', tension:.2 },
+    ...shown.flatMap(s => [
+      { label:`${s} RTT`, yAxisID:'y', data:pts(bySes('downlink')(s), n=>n.rtt_ms), borderColor:sessionColor(s), tension:.2 },
+      { label:`${s} Jitter`, yAxisID:'y', data:pts(bySes('downlink')(s), n=>n.jitter_ms), borderColor:sessionColor(s), borderDash:[6,4], tension:.2 },
+    ]),
+    sinrDs,
   ]}});
 
-  lineChart('#chLoss', { type:'line', options:baseOpts(['%']), data:{ datasets:[
-    { label:'Loss (%)', yAxisID:'y', data:down.map(n=>({x:n.ts*1000,y:n.loss_pct})), borderColor:'#ff7a7a', fill:true, backgroundColor:'rgba(255,122,122,.15)', tension:.2 },
-  ]}});
+  lineChart('#chLoss', { type:'line', options:baseOpts(['%']), data:{ datasets:
+    shown.map(s => ({ label:`${s} Loss`, yAxisID:'y', data:pts(bySes('downlink')(s), n=>n.loss_pct),
+                      borderColor:sessionColor(s), tension:.2 })),
+  }});
+}
+
+// ---- 計測コントロール ----------------------------------------------------
+const JOB_GROUPS = { rf:'電波 (RF) コレクタ', net:'通信品質 測定先',
+                     handover:'ハンドオーバー予測', server:'受信サーバ' };
+
+async function refreshJobs() {
+  const jobs = await getJSON('/api/jobs');
+  let html = '';
+  for (const [kind, title] of Object.entries(JOB_GROUPS)) {
+    const rows = jobs.filter(j=>j.kind===kind);
+    if (!rows.length) continue;
+    html += `<div class="jobgroup"><div class="gt">${title}</div>` + rows.map(j=>`
+      <div class="job">
+        <label class="switch"><input type="checkbox" ${j.enabled?'checked':''}
+          onchange="toggleJob('${j.id}', this.checked)"><span class="sl"></span></label>
+        <span class="lbl">${j.label}</span>
+        <span class="detail">${j.detail||''}</span>
+        ${j.removable?`<button class="del" title="削除" onclick="delTarget('${j.id}')">✕</button>`:''}
+      </div>`).join('') + '</div>';
+  }
+  $('#jobs').innerHTML = html || '<span class="hint">ジョブがありません (config.yaml を確認)</span>';
+}
+
+async function toggleJob(id, enabled) {
+  await fetch(`/api/jobs/${encodeURIComponent(id)}/enable`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({enabled}) });
+  refreshJobs();
+}
+
+async function addTarget() {
+  const label = $('#tLabel').value.trim(), host = $('#tHost').value.trim();
+  if (!host) { alert('相手ホスト (IP) を入力してください'); return; }
+  const r = await fetch('/api/targets', { method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({label: label || host, host}) });
+  const body = await r.json();
+  if (!body.ok) { alert('追加できません: ' + (body.error||'')); return; }
+  $('#tLabel').value = ''; $('#tHost').value = '';
+  refreshJobs();
+}
+
+async function delTarget(id) {
+  if (!confirm('この測定先を削除しますか?')) return;
+  await fetch(`/api/targets/${encodeURIComponent(id)}`, {method:'DELETE'});
+  refreshJobs();
 }
 
 function baseOpts(axes) {
@@ -183,6 +288,7 @@ function baseOpts(axes) {
 
 async function refresh() {
   await refreshSources();
+  await refreshJobs();
   const rf = await refreshRF();
   await refreshCharts(rf);
   await refreshServing();
@@ -191,6 +297,7 @@ async function refresh() {
 
 $('#minutes').onchange = refresh;
 $('#source').onchange = refresh;
+$('#netsession').onchange = refresh;
 refresh();
 setInterval(refresh, 10000);
 </script>

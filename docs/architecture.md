@@ -19,7 +19,10 @@
                 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **orchestrator** が各機能を独立スレッドで定期実行し、結果を **Storage** に蓄積。
+- **orchestrator** は各計測を「ジョブ」（`rf:<name>` / `net:<label>` / `handover` /
+  `netqual-server`）として管理し、Web UI から実行時に ON/OFF・測定先追加ができる。
+  UI での変更は `data/ui_state.json` に保存され再起動後も引き継ぐ（config.yaml は不変更）。
+  測定先は複数持て、`NetSample.session` にラベルが入りグラフはラベル別に描画される。
 - **webapp** は Storage を読むだけの薄い層。API(JSON) + 1 枚の SPA ダッシュボード。
 - 各機能は疎結合。外部依存が無くても本体は起動し、該当機能のみ無効化。
 

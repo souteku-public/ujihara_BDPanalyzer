@@ -10,6 +10,8 @@ BDP Analyzer の残作業・実機導入時の対応事項。チェックを入�
 - [x] SQLite 時系列 + SINR とネット品質の時間窓突き合わせ
 - [x] Flask + Chart.js ダッシュボード（SINR vs スループット/RTT/ジッタ 対比）
 - [x] CLI（monitor / receiver / sender / predict）、pytest 一式、docs
+- [x] UI 計測コントロール（機器・測定先・予測を画面上で ON/OFF、再起動不要・状態保存）
+- [x] 測定先の複数登録＋ラベル別グラフ表示（Ether / Wi-Fi 品質チェック対応、UI から追加/削除）
 
 ## 🔧 実機導入時にやること（設定・確認）
 - [ ] `config.example.yaml` を `config.yaml` にコピーし、自局の緯度経度・標高・仰角マスクを設定

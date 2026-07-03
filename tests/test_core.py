@@ -70,3 +70,59 @@ def test_netqual_loopback():
     assert down.throughput_bps and down.throughput_bps > 0
     assert down.loss_pct is not None
     assert down.rtt_ms is not None      # ループバックなので必ず戻る
+
+
+def test_ui_job_control_and_targets():
+    """UI からのジョブ ON/OFF・測定先追加/削除・状態の再起動復元."""
+    from bdp_analyzer.config import Config, GroundStation
+    from bdp_analyzer.orchestrator import Orchestrator
+    from bdp_analyzer.webapp.server import create_app
+
+    with tempfile.TemporaryDirectory() as d:
+        def mkcfg():
+            return Config(
+                raw={}, ground_station=GroundStation(),
+                db_path=os.path.join(d, "t.sqlite"), collectors=[],
+                netqual={"enabled": True, "role": "both",
+                         "control_port": 15531, "udp_port": 15532,
+                         "interval_s": 2, "throughput_seconds": 0.3,
+                         "udp_probe_count": 5, "udp_probe_interval_ms": 5,
+                         "targets": []},
+                handover={"enabled": False}, webapp={})
+
+        orch = Orchestrator(mkcfg())
+        orch.start()
+        try:
+            c = create_app(orch.storage, orch).test_client()
+            jobs = {j["id"]: j for j in c.get("/api/jobs").get_json()}
+            assert jobs["netqual-server"]["enabled"]
+
+            # 測定先追加 → ラベル付きで記録される
+            r = c.post("/api/targets", json={"label": "LANチェック",
+                                             "host": "127.0.0.1"})
+            assert r.get_json()["ok"]
+            time.sleep(3)
+            assert "LANチェック" in {row["session"]
+                                     for row in orch.storage.recent_net(0)}
+
+            # OFF → (仕掛かり分の完了後) 測定停止
+            jid = "net:LANチェック"
+            assert c.post(f"/api/jobs/{jid}/enable",
+                          json={"enabled": False}).get_json()["ok"]
+            time.sleep(2)
+            n0 = len(orch.storage.recent_net(0))
+            time.sleep(2.5)
+            assert len(orch.storage.recent_net(0)) == n0
+        finally:
+            orch.stop()
+
+        # 再起動 → 追加した測定先と OFF 状態が復元される
+        orch2 = Orchestrator(mkcfg())
+        orch2.start()
+        try:
+            j2 = {j["id"]: j for j in orch2.jobs_status()}
+            assert "net:LANチェック" in j2
+            assert j2["net:LANチェック"]["enabled"] is False
+            assert orch2.remove_net_target("net:LANチェック")
+        finally:
+            orch2.stop()
