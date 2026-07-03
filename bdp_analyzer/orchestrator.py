@@ -67,6 +67,10 @@ class Orchestrator:
         self.latest_serving: dict = {}
         self._state_path = os.path.join(
             os.path.dirname(config.db_path) or ".", "ui_state.json")
+        # ネットワーク情報 (UI 入力のメモ) と負荷試験の実行状態
+        self.net_profile: Dict[str, Any] = {}
+        self._global_ip: Optional[str] = None
+        self.load_status: Dict[str, Any] = {"running": False, "results": []}
 
     # ---- UI 状態の永続化 ---------------------------------------------------
     def _load_state(self) -> Dict[str, Any]:
@@ -81,6 +85,7 @@ class Orchestrator:
             "enabled": {jid: j["enabled"] for jid, j in self.jobs.items()},
             "targets": [j["meta"] for j in self.jobs.values()
                         if j["kind"] == "net" and j.get("removable")],
+            "net_profile": self.net_profile,
         }
         try:
             with open(self._state_path, "w", encoding="utf-8") as fh:
@@ -223,10 +228,132 @@ class Orchestrator:
             self._save_state()
             return True
 
+    # ---- ネットワーク情報 (UI 入力 + 自動検出) --------------------------------
+    _PROFILE_KEYS = ("line_type", "local_ip_note", "peer_global_ip", "note")
+
+    def get_netinfo(self) -> Dict[str, Any]:
+        import socket as _s
+        ips = set()
+        try:
+            s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))          # 実送信はしない (経路上の自 IP を得る)
+            ips.add(s.getsockname()[0])
+            s.close()
+        except OSError:
+            pass
+        try:
+            for ip in _s.gethostbyname_ex(_s.gethostname())[2]:
+                if not ip.startswith("127."):
+                    ips.add(ip)
+        except OSError:
+            pass
+        return {
+            "hostname": _s.gethostname(),
+            "local_ips": sorted(ips),
+            "global_ip": self._global_ip,
+            "profile": dict(self.net_profile),
+        }
+
+    def refresh_global_ip(self) -> Optional[str]:
+        """外部サービスに問い合わせて自局のグローバル IP を取得 (ベストエフォート)."""
+        import requests
+        for url in ("https://api.ipify.org?format=json",
+                    "https://ifconfig.me/ip"):
+            try:
+                r = requests.get(url, timeout=5)
+                r.raise_for_status()
+                ip = (r.json().get("ip") if "json" in url else r.text).strip()
+                if ip:
+                    self._global_ip = ip
+                    return ip
+            except Exception as e:  # noqa: BLE001
+                log.debug("グローバル IP 取得失敗 %s: %s", url, e)
+        return None
+
+    def set_net_profile(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            for k in self._PROFILE_KEYS:
+                if k in data:
+                    self.net_profile[k] = str(data[k])[:200]
+            self._save_state()
+        return dict(self.net_profile)
+
+    # ---- 負荷耐性テスト (レートスイープ) --------------------------------------
+    def start_load_test(self, target_id: str, direction: str,
+                        rates_bps: List[float], step_seconds: float) -> Optional[str]:
+        """UI からの負荷試験開始。エラー文字列を返す (None なら開始成功)."""
+        if direction not in ("uplink", "downlink"):
+            return "direction は uplink / downlink"
+        if not rates_bps or len(rates_bps) > 20:
+            return "レートは 1〜20 段で指定してください"
+        with self._lock:
+            if self.load_status.get("running"):
+                return "負荷試験が実行中です"
+            j = self.jobs.get(target_id)
+            if not j or j["kind"] != "net":
+                return "測定先が見つかりません"
+            meta = dict(j["meta"])
+            d = self._net_defaults()
+            self.load_status = {
+                "running": True, "target": target_id,
+                "session": meta.get("label") or meta.get("host"),
+                "direction": direction, "step": 0, "total": len(rates_bps),
+                "results": [], "error": None, "started_ts": time.time(),
+            }
+        threading.Thread(target=self._load_test_thread, daemon=True,
+                         args=(target_id, meta, d, direction,
+                               rates_bps, step_seconds)).start()
+        return None
+
+    def get_load_status(self) -> Dict[str, Any]:
+        with self._lock:
+            st = dict(self.load_status)
+            st["results"] = list(st.get("results", []))
+        return st
+
+    def _load_test_thread(self, target_id: str, meta: Dict[str, Any],
+                          defaults: Dict[str, Any], direction: str,
+                          rates_bps: List[float], step_seconds: float) -> None:
+        from .netqual import loadtest
+
+        # 定期測定と負荷が干渉しないよう、対象ジョブを試験中だけ止める
+        # (UI 状態ファイルには保存しない一時停止)
+        with self._lock:
+            j = self.jobs.get(target_id)
+            was_running = bool(j and j["enabled"])
+            if was_running:
+                self._stop_job(target_id)
+
+        def on_step(r):
+            self.storage.add_load_result(r)
+            with self._lock:
+                self.load_status["step"] += 1
+                self.load_status["results"].append(r)
+
+        try:
+            loadtest.run_sweep(
+                meta["host"],
+                int(meta.get("control_port", defaults["control_port"])),
+                int(meta.get("udp_port", defaults["udp_port"])),
+                direction=direction, rates_bps=rates_bps,
+                step_seconds=step_seconds,
+                session=meta.get("label") or meta.get("host"),
+                on_step=on_step)
+        except Exception as e:  # noqa: BLE001
+            with self._lock:
+                self.load_status["error"] = str(e)
+            log.exception("負荷試験エラー: %s", e)
+        finally:
+            with self._lock:
+                self.load_status["running"] = False
+                if was_running and target_id in self.jobs:
+                    self._start_job(target_id)
+
     # ---- 起動 ---------------------------------------------------------------
     def start(self) -> None:
         state = self._load_state()
         overrides: Dict[str, bool] = state.get("enabled", {})
+        self.net_profile = dict(state.get("net_profile") or {})
 
         def initial(job_id: str, default: bool) -> bool:
             return bool(overrides.get(job_id, default))

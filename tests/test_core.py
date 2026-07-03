@@ -126,3 +126,57 @@ def test_ui_job_control_and_targets():
             assert orch2.remove_net_target("net:LANチェック")
         finally:
             orch2.stop()
+
+
+def test_loadtest_sweep_loopback():
+    """負荷耐性テスト: ループバックで上り/下りスイープが完走し DB に残る."""
+    from bdp_analyzer.netqual.server import NetqualServer
+    from bdp_analyzer.netqual import loadtest
+
+    srv = NetqualServer(15551, 15552)
+    srv.start()
+    try:
+        time.sleep(0.3)
+        for direction in ("uplink", "downlink"):
+            results = loadtest.run_sweep(
+                "127.0.0.1", 15551, 15552, direction=direction,
+                rates_bps=[2e6], step_seconds=1, session="lo")
+            assert len(results) == 1
+            r = results[0]
+            assert r.get("error") is None
+            assert r["achieved_bps"] > 2e6 * 0.7
+            assert r["loss_pct"] is not None and r["loss_pct"] < 20
+            assert r["rtt_ms"] is not None      # 負荷時 RTT
+    finally:
+        srv.stop()
+
+
+def test_netinfo_profile_roundtrip():
+    """ネットワーク情報: 自動検出とプロファイル保存/復元."""
+    from bdp_analyzer.config import Config, GroundStation
+    from bdp_analyzer.orchestrator import Orchestrator
+
+    with tempfile.TemporaryDirectory() as d:
+        def mkcfg():
+            return Config(raw={}, ground_station=GroundStation(),
+                          db_path=os.path.join(d, "t.sqlite"), collectors=[],
+                          netqual={"enabled": False}, handover={"enabled": False},
+                          webapp={})
+        orch = Orchestrator(mkcfg())
+        orch.start()
+        try:
+            info = orch.get_netinfo()
+            assert info["hostname"]
+            orch.set_net_profile({"line_type": "static_global",
+                                  "peer_global_ip": "198.51.100.5"})
+        finally:
+            orch.stop()
+
+        orch2 = Orchestrator(mkcfg())
+        orch2.start()
+        try:
+            p = orch2.get_netinfo()["profile"]
+            assert p["line_type"] == "static_global"
+            assert p["peer_global_ip"] == "198.51.100.5"
+        finally:
+            orch2.stop()

@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS net_samples (
 );
 CREATE INDEX IF NOT EXISTS idx_net_ts ON net_samples(ts);
 
+CREATE TABLE IF NOT EXISTS load_tests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL, session TEXT, direction TEXT,
+    offered_bps REAL, achieved_bps REAL, loss_pct REAL, jitter_ms REAL, rtt_ms REAL
+);
+CREATE INDEX IF NOT EXISTS idx_load_ts ON load_tests(ts);
+
 CREATE TABLE IF NOT EXISTS handover_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL, constellation TEXT, from_sat TEXT, to_sat TEXT,
@@ -72,6 +79,11 @@ class Storage:
     def add_handover(self, e: HandoverEvent) -> None:
         self._insert("handover_events", e.as_row())
 
+    def add_load_result(self, row: Dict[str, Any]) -> None:
+        keys = ("ts", "session", "direction", "offered_bps", "achieved_bps",
+                "loss_pct", "jitter_ms", "rtt_ms")
+        self._insert("load_tests", {k: row.get(k) for k in keys})
+
     # ---- 読み出し --------------------------------------------------------
     def _query(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
         with self._connect() as con:
@@ -86,6 +98,10 @@ class Storage:
 
     def recent_net(self, since_ts: float) -> List[Dict[str, Any]]:
         return self._query("SELECT * FROM net_samples WHERE ts>=? ORDER BY ts", (since_ts,))
+
+    def recent_load_tests(self, since_ts: float) -> List[Dict[str, Any]]:
+        return self._query("SELECT * FROM load_tests WHERE ts>=? ORDER BY ts",
+                           (since_ts,))
 
     def recent_handovers(self, since_ts: float) -> List[Dict[str, Any]]:
         return self._query(

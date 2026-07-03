@@ -87,8 +87,58 @@
     </section>
 
     <section class="card">
+      <h2>ネットワーク情報</h2>
+      <div id="netinfoAuto" class="hint" style="margin:0 0 10px"></div>
+      <div class="addform" style="margin-top:0">
+        <select id="npLineType" style="flex:1;min-width:150px">
+          <option value="">回線種別: 未設定</option>
+          <option value="dhcp_private">DHCP (プライベートIP)</option>
+          <option value="static_global">固定グローバルIP</option>
+          <option value="cgnat">CGNAT (Starlink標準 等)</option>
+          <option value="unknown">不明</option>
+        </select>
+        <input id="npPeer" placeholder="対向のグローバルIP">
+      </div>
+      <div class="addform">
+        <input id="npNote" placeholder="メモ (回線名・契約など)">
+        <button onclick="saveProfile()">保存</button>
+        <button onclick="fetchGlobalIP()" style="background:#2a3550;color:var(--fg)">グローバルIP取得</button>
+      </div>
+      <div class="hint">
+        CGNAT 配下 (Starlink 標準プラン等) の PC には外部から着信できません。
+        その場合この PC は測定主体として使い、対向 PC 側を固定グローバル IP
+        + ポート開放 (TCP/UDP) にしてください。
+      </div>
+    </section>
+
+    <section class="card">
       <h2>現在の RF 状態</h2>
       <div class="kpis" id="rfkpi"></div>
+    </section>
+
+    <section class="card full">
+      <h2>負荷耐性テスト (レートスイープ)</h2>
+      <div class="addform" style="margin-top:0">
+        <select id="ltTarget" style="min-width:160px"></select>
+        <select id="ltDir">
+          <option value="uplink">上り (この PC → 相手)</option>
+          <option value="downlink">下り (相手 → この PC)</option>
+        </select>
+        <input id="ltRates" value="1,2,5,10,20,50" title="送出レート Mbps (カンマ区切り)" style="min-width:160px">
+        <input id="ltStep" value="5" title="各ステップの秒数" style="max-width:70px">
+        <button onclick="startLoadTest()" id="ltBtn">▶ 開始</button>
+      </div>
+      <div class="hint" id="ltStatus">
+        送出レート(Mbps)を段階的に上げ、実効レート・ロス・負荷時RTTの変化から回線の耐性(実効容量・飽和挙動)を測ります。
+        <b>実運用トラフィックに影響し、データ量も消費します。</b>実施タイミングに注意。
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px">
+        <canvas id="chLoad"></canvas>
+        <div style="overflow:auto"><table id="ltTable">
+          <thead><tr><th>送出</th><th>実効</th><th>ロス</th><th>負荷時RTT</th><th>ジッタ</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
     </section>
 
     <section class="card">
@@ -234,8 +284,8 @@ async function refreshCharts(rf) {
 const JOB_GROUPS = { rf:'電波 (RF) コレクタ', net:'通信品質 測定先',
                      handover:'ハンドオーバー予測', server:'受信サーバ' };
 
-async function refreshJobs() {
-  const jobs = await getJSON('/api/jobs');
+async function refreshJobs(jobs) {
+  jobs = jobs || await getJSON('/api/jobs');
   let html = '';
   for (const [kind, title] of Object.entries(JOB_GROUPS)) {
     const rows = jobs.filter(j=>j.kind===kind);
@@ -286,12 +336,110 @@ function baseOpts(axes) {
   return o;
 }
 
+// ---- ネットワーク情報 ------------------------------------------------------
+let profileLoaded = false;
+async function refreshNetinfo() {
+  const ni = await getJSON('/api/netinfo');
+  const LT = {dhcp_private:'DHCP (プライベートIP)', static_global:'固定グローバルIP',
+              cgnat:'CGNAT', unknown:'不明'};
+  $('#netinfoAuto').innerHTML =
+    `ホスト名: <b>${ni.hostname||'—'}</b> ／ ローカルIP: <b>${(ni.local_ips||[]).join(', ')||'—'}</b>` +
+    ` ／ グローバルIP: <b>${ni.global_ip||'未取得'}</b>` +
+    (ni.profile?.line_type ? ` ／ 回線種別: <b>${LT[ni.profile.line_type]||ni.profile.line_type}</b>` : '');
+  if (!profileLoaded && ni.profile) {   // 初回のみフォームへ反映 (入力中の上書き防止)
+    $('#npLineType').value = ni.profile.line_type || '';
+    $('#npPeer').value = ni.profile.peer_global_ip || '';
+    $('#npNote').value = ni.profile.note || '';
+    profileLoaded = true;
+  }
+}
+async function saveProfile() {
+  await fetch('/api/netinfo', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({line_type:$('#npLineType').value,
+                          peer_global_ip:$('#npPeer').value, note:$('#npNote').value})});
+  refreshNetinfo();
+}
+async function fetchGlobalIP() {
+  const r = await (await fetch('/api/netinfo/global', {method:'POST'})).json();
+  if (!r.ok) alert('グローバルIPを取得できませんでした (外部到達性を確認)');
+  refreshNetinfo();
+}
+
+// ---- 負荷耐性テスト ---------------------------------------------------------
+let ltTimer = null;
+async function refreshLoadTargets(jobs) {
+  const nets = jobs.filter(j=>j.kind==='net');
+  const sel = $('#ltTarget'); const cur = sel.value;
+  sel.innerHTML = nets.map(j=>`<option value="${j.id}">${j.label}</option>`).join('')
+                  || '<option value="">(測定先なし)</option>';
+  if ([...sel.options].some(o=>o.value===cur)) sel.value = cur;
+}
+async function startLoadTest() {
+  const rates = $('#ltRates').value.split(',').map(s=>parseFloat(s)).filter(v=>v>0);
+  if (!$('#ltTarget').value) { alert('測定先を追加してください'); return; }
+  if (!rates.length) { alert('レート (Mbps) をカンマ区切りで入力してください'); return; }
+  const r = await (await fetch('/api/loadtest', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({target:$('#ltTarget').value, direction:$('#ltDir').value,
+                          rates_mbps:rates, step_s:parseFloat($('#ltStep').value)||5})})).json();
+  if (!r.ok) { alert('開始できません: '+(r.error||'')); return; }
+  $('#ltBtn').disabled = true;
+  if (ltTimer) clearInterval(ltTimer);
+  ltTimer = setInterval(pollLoadTest, 2000);
+  pollLoadTest();
+}
+async function pollLoadTest() {
+  const st = await getJSON('/api/loadtest');
+  if (st.started_ts) renderLoadTest(st);
+  if (!st.running) {
+    $('#ltBtn').disabled = false;
+    if (ltTimer) { clearInterval(ltTimer); ltTimer = null; }
+  }
+}
+function renderLoadTest(st) {
+  const dirJa = st.direction==='downlink' ? '下り' : '上り';
+  $('#ltStatus').innerHTML = st.running
+    ? `⏳ 実行中: ${st.session} ${dirJa} — ステップ ${st.step}/${st.total}`
+    : `✅ 完了: ${st.session} ${dirJa} (${st.total} ステップ)` +
+      (st.error ? ` <span style="color:#ff7a7a">エラー: ${st.error}</span>` : '');
+  const rs = st.results||[];
+  $('#ltTable tbody').innerHTML = rs.map(r=>`<tr>
+    <td>${(r.offered_bps/1e6).toFixed(1)} Mbps</td>
+    <td>${r.achieved_bps!=null?(r.achieved_bps/1e6).toFixed(1)+' Mbps':'—'}</td>
+    <td>${r.loss_pct!=null?r.loss_pct.toFixed(1)+' %':'—'}</td>
+    <td>${r.rtt_ms!=null?r.rtt_ms.toFixed(0)+' ms':'—'}</td>
+    <td>${r.jitter_ms!=null?r.jitter_ms.toFixed(1)+' ms':'—'}</td></tr>`).join('');
+  lineChart('#chLoad', { type:'line',
+    options:(()=>{ const o = baseOpts(['Mbps','ロス % / RTT ms']);
+      o.scales.x.ticks.callback = v=>v+'M';
+      o.scales.x.title = {display:true,text:'送出レート (Mbps)',color:'#8b98b0'};
+      return o; })(),
+    data:{ datasets:[
+      { label:'実効レート (Mbps)', yAxisID:'y',
+        data:rs.map(r=>({x:r.offered_bps/1e6, y:r.achieved_bps!=null?r.achieved_bps/1e6:null})),
+        borderColor:'#4da3ff', tension:.2 },
+      { label:'理想 (送出=実効)', yAxisID:'y',
+        data:rs.map(r=>({x:r.offered_bps/1e6, y:r.offered_bps/1e6})),
+        borderColor:'#2a3550', borderDash:[4,4], pointRadius:0 },
+      { label:'ロス (%)', yAxisID:'y1',
+        data:rs.map(r=>({x:r.offered_bps/1e6, y:r.loss_pct})),
+        borderColor:'#ff7a7a', tension:.2 },
+      { label:'負荷時RTT (ms)', yAxisID:'y1',
+        data:rs.map(r=>({x:r.offered_bps/1e6, y:r.rtt_ms})),
+        borderColor:'#ffb454', borderDash:[6,4], tension:.2 },
+    ]}});
+}
+
 async function refresh() {
   await refreshSources();
-  await refreshJobs();
+  const jobs = await getJSON('/api/jobs');
+  await refreshJobs(jobs);
+  await refreshLoadTargets(jobs);
+  await refreshNetinfo();
   const rf = await refreshRF();
   await refreshCharts(rf);
   await refreshServing();
+  if (!ltTimer) pollLoadTest();   // 過去の実行結果があれば表示
   $('#updated').textContent = '更新: ' + new Date().toLocaleTimeString('ja-JP');
 }
 

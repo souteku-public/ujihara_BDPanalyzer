@@ -91,6 +91,54 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
         ok = orchestrator.remove_net_target(job_id)
         return jsonify({"ok": ok}), (200 if ok else 404)
 
+    # ---- ネットワーク情報 --------------------------------------------------
+    @app.route("/api/netinfo")
+    def api_netinfo():
+        return jsonify(orchestrator.get_netinfo() if orchestrator else {})
+
+    @app.route("/api/netinfo", methods=["POST"])
+    def api_netinfo_save():
+        if orchestrator is None:
+            return jsonify({"ok": False}), 400
+        body = request.get_json(force=True, silent=True) or {}
+        return jsonify({"ok": True,
+                        "profile": orchestrator.set_net_profile(body)})
+
+    @app.route("/api/netinfo/global", methods=["POST"])
+    def api_netinfo_global():
+        if orchestrator is None:
+            return jsonify({"ok": False}), 400
+        ip = orchestrator.refresh_global_ip()
+        return jsonify({"ok": ip is not None, "global_ip": ip})
+
+    # ---- 負荷耐性テスト ------------------------------------------------------
+    @app.route("/api/loadtest", methods=["POST"])
+    def api_loadtest_start():
+        if orchestrator is None:
+            return jsonify({"ok": False, "error": "orchestrator なし"}), 400
+        body = request.get_json(force=True, silent=True) or {}
+        try:
+            rates = [float(m) * 1e6 for m in body.get("rates_mbps", [])]
+            step_s = float(body.get("step_s", 5))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "レート/秒数が不正です"}), 400
+        err = orchestrator.start_load_test(
+            body.get("target", ""), body.get("direction", "uplink"),
+            rates, step_s)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        return jsonify({"ok": True})
+
+    @app.route("/api/loadtest")
+    def api_loadtest_status():
+        if orchestrator is None:
+            return jsonify({"running": False, "results": []})
+        return jsonify(orchestrator.get_load_status())
+
+    @app.route("/api/loadtests")
+    def api_loadtest_history():
+        return jsonify(storage.recent_load_tests(_since()))
+
     return app
 
 
