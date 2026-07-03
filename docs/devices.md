@@ -15,7 +15,11 @@ Starlink には RF 専用 WebGUI はありませんが、**Dish 本体(Dishy)が
 ### 接続
 - 本ソフトの動作 PC から Dish へ IP 到達性が必要（ルータ配下なら 192.168.100.1
   へのルーティング/スタティックルート、または Dish 直下に測定 PC を置く）。
+- **Mini はルータ一体型**のため、Mini の Wi-Fi / LAN ポートに PC を直接つなげば
+  そのまま `192.168.100.1` に届く（`ping 192.168.100.1` で確認）。
+  自前ルータを下流に挟む場合・バイパスモードでは到達性の確認/ルート追加が必要。
 - `grpcurl`（<https://github.com/fullstorydev/grpcurl>）を OS に導入。
+  PATH に置かない場合は config の `grpcurl:` に実行ファイルのパスを指定。
 
 ```bash
 grpcurl -plaintext -d '{"get_status":{}}' 192.168.100.1:9200 \
