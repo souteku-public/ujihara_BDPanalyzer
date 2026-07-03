@@ -260,6 +260,21 @@ python -m bdp_analyzer predict --config config.yaml    # ハンドオーバー�
 
 ---
 
+## データの保存形式
+
+取得データは **SQLite 1 ファイル**（`data/bdp.sqlite`）に蓄積されます。
+**どのネットワーク・どの機器で測っても列構成は同じ**で、回線や機器の違いは
+`session`（測定先ラベル）・`source`/`kind`（機器名/種別）の値で区別します。
+
+- **CSV でダウンロード**: ダッシュボード右上の「CSV: RF / 通信品質 / 負荷試験 / HO」。
+  Excel でそのまま開けます（ISO 形式の時刻列付き・文字化け対策済み）
+- **JSON API**: `/api/rf` `/api/net` `/api/loadtests` `/api/handovers` など
+- **SQLite 直接**: pandas や DB Browser for SQLite で分析可能
+
+列の意味・単位の一覧は **[docs/data_format.md](docs/data_format.md)** を参照。
+
+---
+
 ## 機器のつなぎ方（測定 PC をどこに接続するか）
 
 ### Starlink Mini の場合

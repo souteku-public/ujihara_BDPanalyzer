@@ -66,6 +66,12 @@
         <option value="60">60分</option>
         <option value="180">3時間</option>
       </select></label>
+      <span style="border-left:1px solid #2a3550;padding-left:10px">CSV:
+        <a href="#" onclick="dlCSV('rf');return false" style="color:var(--accent)">RF</a> /
+        <a href="#" onclick="dlCSV('net');return false" style="color:var(--accent)">通信品質</a> /
+        <a href="#" onclick="dlCSV('load');return false" style="color:var(--accent)">負荷試験</a> /
+        <a href="#" onclick="dlCSV('handover');return false" style="color:var(--accent)">HO</a>
+      </span>
       <span id="updated"></span>
     </div>
   </header>
@@ -177,6 +183,7 @@ let charts = {};
 async function getJSON(url) { const r = await fetch(url); return r.json(); }
 function q() { return `minutes=${$('#minutes').value}` + ($('#source').value ? `&source=${encodeURIComponent($('#source').value)}` : ''); }
 function fmtTs(ts) { return new Date(ts*1000).toLocaleTimeString('ja-JP'); }
+function dlCSV(kind) { location.href = `/export/${kind}.csv?minutes=${$('#minutes').value}`; }
 function mbps(v) { return v==null ? '—' : (v/1e6).toFixed(1); }
 
 function lineChart(id, cfg) {

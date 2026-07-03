@@ -2,16 +2,36 @@
 
 SINR と スループット/ジッタ/RTT の対比、アンテナの向き、衛星の可視状況と
 ハンドオーバー予測タイムラインを表示する。API は JSON を返し、フロントは
-Chart.js で描画する。
+Chart.js で描画する。CSV エクスポート (/export/*.csv) も提供する。
 """
 from __future__ import annotations
 
+import csv
+import io
 import time
+from datetime import datetime
 from typing import Optional
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from ..storage import Storage
+
+# CSV の列順 (データが空でもこの順でヘッダを出す。docs/data_format.md と一致)
+_EXPORT_COLUMNS = {
+    "rf": ["ts", "time_iso", "source", "kind", "sinr_db", "snr_above_noise",
+           "rssi_dbm", "azimuth_deg", "elevation_deg", "tilt_deg",
+           "tx_freq_mhz", "rx_freq_mhz", "beam_id", "satellite_id",
+           "down_bps", "up_bps", "latency_ms", "drop_rate",
+           "obstruction_pct", "state"],
+    "net": ["ts", "time_iso", "session", "direction", "throughput_bps",
+            "rtt_ms", "rtt_min_ms", "rtt_max_ms", "jitter_ms", "loss_pct",
+            "owd_ms"],
+    "load": ["ts", "time_iso", "session", "direction", "offered_bps",
+             "achieved_bps", "loss_pct", "jitter_ms", "rtt_ms"],
+    "handover": ["ts", "time_iso", "constellation", "from_sat", "to_sat",
+                 "reason", "from_elevation_deg", "to_elevation_deg",
+                 "lead_time_s"],
+}
 
 
 def create_app(storage: Storage, orchestrator=None) -> Flask:
@@ -138,6 +158,33 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
     @app.route("/api/loadtests")
     def api_loadtest_history():
         return jsonify(storage.recent_load_tests(_since()))
+
+    # ---- CSV エクスポート ----------------------------------------------------
+    @app.route("/export/<kind>.csv")
+    def export_csv(kind: str):
+        fetchers = {
+            "rf": storage.recent_rf,
+            "net": storage.recent_net,
+            "load": storage.recent_load_tests,
+            "handover": storage.recent_handovers,
+        }
+        if kind not in fetchers:
+            return jsonify({"error": "rf / net / load / handover"}), 404
+        cols = _EXPORT_COLUMNS[kind]
+        rows = fetchers[kind](_since())
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(cols)
+        for r in rows:
+            r = dict(r)
+            # Excel 等で扱いやすいよう ISO 形式の時刻列を付与 (ローカル時刻)
+            r["time_iso"] = datetime.fromtimestamp(r["ts"]).astimezone().isoformat()
+            w.writerow([r.get(c, "") if r.get(c) is not None else "" for c in cols])
+        fname = f"bdp_{kind}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        return Response(
+            buf.getvalue().encode("utf-8-sig"),   # BOM 付き (Excel の文字化け対策)
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={fname}"})
 
     return app
 

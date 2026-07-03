@@ -180,3 +180,28 @@ def test_netinfo_profile_roundtrip():
             assert p["peer_global_ip"] == "198.51.100.5"
         finally:
             orch2.stop()
+
+
+def test_csv_export():
+    """CSV エクスポート: 全種別で固定ヘッダが出て、データ行が入る."""
+    from bdp_analyzer.webapp.server import create_app
+
+    with tempfile.TemporaryDirectory() as d:
+        st = Storage(os.path.join(d, "t.sqlite"))
+        now = time.time()
+        st.add_rf(RFSample(ts=now, source="s1", kind="starlink", sinr_db=7.5))
+        st.add_net(NetSample(ts=now, session="Wi-Fi", direction="downlink",
+                             throughput_bps=5e7, rtt_ms=12.3))
+        c = create_app(st, None).test_client()
+
+        for kind in ("rf", "net", "load", "handover"):
+            resp = c.get(f"/export/{kind}.csv?minutes=60")
+            assert resp.status_code == 200
+            body = resp.data.decode("utf-8-sig")
+            assert body.splitlines()[0].startswith("ts,time_iso,")
+
+        net_csv = c.get("/export/net.csv?minutes=60").data.decode("utf-8-sig")
+        assert "Wi-Fi" in net_csv and "downlink" in net_csv
+        rf_csv = c.get("/export/rf.csv?minutes=60").data.decode("utf-8-sig")
+        assert "starlink" in rf_csv and "7.5" in rf_csv
+        assert c.get("/export/bad.csv").status_code == 404
