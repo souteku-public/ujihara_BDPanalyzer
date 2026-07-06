@@ -31,6 +31,7 @@ _EXPORT_COLUMNS = {
     "handover": ["ts", "time_iso", "constellation", "from_sat", "to_sat",
                  "reason", "from_elevation_deg", "to_elevation_deg",
                  "lead_time_s"],
+    "markers": ["ts", "time_iso", "text"],
 }
 
 
@@ -181,6 +182,20 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
     def api_loadtest_history():
         return jsonify(storage.recent_load_tests(_since()))
 
+    # ---- 実験マーカー (アンテナ間距離の変更等をデータに刻む) ------------------
+    @app.route("/api/markers")
+    def api_markers():
+        return jsonify(storage.recent_markers(_since()))
+
+    @app.route("/api/markers", methods=["POST"])
+    def api_marker_add():
+        body = request.get_json(force=True, silent=True) or {}
+        text = (body.get("text") or "").strip()
+        if not text:
+            return jsonify({"ok": False, "error": "テキストが空です"}), 400
+        storage.add_marker(time.time(), text)
+        return jsonify({"ok": True})
+
     # ---- CSV エクスポート ----------------------------------------------------
     @app.route("/export/<kind>.csv")
     def export_csv(kind: str):
@@ -189,6 +204,7 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
             "net": storage.recent_net,
             "load": storage.recent_load_tests,
             "handover": storage.recent_handovers,
+            "markers": storage.recent_markers,
         }
         if kind not in fetchers:
             return jsonify({"error": "rf / net / load / handover"}), 404

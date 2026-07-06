@@ -344,3 +344,48 @@ def test_bind_ip_multi_nic():
         t.join(timeout=2)
     finally:
         srv.stop()
+
+
+def test_sinr_model_and_markers():
+    """SINR 理論値 (リンクバジェット) の記録と実験マーカー."""
+    from bdp_analyzer.handover.linkbudget import estimate_sinr_db
+    from bdp_analyzer.config import Config, GroundStation
+    from bdp_analyzer.orchestrator import Orchestrator
+    from bdp_analyzer.webapp.server import create_app
+
+    # 代表値で桁が合い、距離・仰角の悪化で単調に下がる
+    near = estimate_sinr_db(range_km=550, elevation_deg=90)
+    far = estimate_sinr_db(range_km=1200, elevation_deg=25)
+    assert 10 < near < 30 and far < near
+    assert abs((near - estimate_sinr_db(range_km=550, elevation_deg=90,
+                                        interference_margin_db=5)) - 5) < 1e-9
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(
+            raw={"sinr_model": {"enabled": True,
+                                "starlink": {"eirp_dbw": 36.0},
+                                "oneweb": {"eirp_dbw": 34.0}}},
+            ground_station=GroundStation(), db_path=os.path.join(d, "t.sqlite"),
+            collectors=[], netqual={"enabled": False},
+            handover={"enabled": False}, webapp={})
+        orch = Orchestrator(cfg)
+        orch.start()
+        try:
+            orch._emit_sinr_model({
+                "starlink": {"satellite": "SL-1", "elevation_deg": 62.0,
+                             "azimuth_deg": 140.0, "range_km": 610.0},
+                "oneweb": {"satellite": "OW-1", "elevation_deg": 48.0,
+                           "azimuth_deg": 200.0, "range_km": 1450.0}})
+            model = {r["source"]: r for r in orch.storage.recent_rf(0)
+                     if r["kind"] == "model"}
+            assert {"model:starlink", "model:oneweb"} <= set(model)
+            assert model["model:starlink"]["sinr_db"] is not None
+
+            c = create_app(orch.storage, orch).test_client()
+            assert c.post("/api/markers",
+                          json={"text": "距離 1.5m"}).get_json()["ok"]
+            assert c.get("/api/markers?minutes=60").get_json()[0]["text"] == "距離 1.5m"
+            assert "距離 1.5m" in c.get(
+                "/export/markers.csv?minutes=60").data.decode("utf-8-sig")
+        finally:
+            orch.stop()

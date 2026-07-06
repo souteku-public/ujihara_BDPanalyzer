@@ -43,8 +43,8 @@ net = pd.read_sql("SELECT * FROM net_samples", con, parse_dates={"ts": "s"})
 | 列 | 型 | 単位/値 | 説明 |
 |---|---|---|---|
 | ts | REAL | epoch 秒 (UTC) | 取得時刻 |
-| source | TEXT | — | コレクタ名（config の `name`。例: `starlink-mini-1`）。**`:1s` 付き（例: `starlink-mini-1:1s`）は get_history 由来の 1 秒解像度サンプル**（遅延・上下スループット・ドロップ率のみ、向き等は NULL） |
-| kind | TEXT | `starlink` / `kymeta` / `intellian` | 機器種別 |
+| source | TEXT | — | コレクタ名（config の `name`。例: `starlink-mini-1`）。**`:1s` 付き（例: `starlink-mini-1:1s`）は get_history 由来の 1 秒解像度サンプル**（遅延・上下スループット・ドロップ率のみ、向き等は NULL）。**`model:starlink` / `model:oneweb` はリンクバジェットによる理論 SINR**（実測との差分 Δ が干渉等の劣化推定量） |
+| kind | TEXT | `starlink` / `kymeta` / `intellian` / `model` | 機器種別（`model` は理論値行） |
 | sinr_db | REAL | dB | SINR/SNR（Starlink 新ファームは NULL） |
 | snr_above_noise | INTEGER | 0/1 | SNR がノイズフロア以上か（Starlink） |
 | rssi_dbm | REAL | dBm | 受信強度（機器が出す場合） |
@@ -69,6 +69,13 @@ net = pd.read_sql("SELECT * FROM net_samples", con, parse_dates={"ts": "s"})
 | loss_pct | REAL | % | ロス率 |
 | jitter_ms | REAL | ms | ジッタ |
 | rtt_ms | REAL | ms | **負荷時 RTT**（並行プローブによる） |
+
+### markers — 実験マーカー
+
+| 列 | 型 | 説明 |
+|---|---|---|
+| ts | REAL | 記録時刻 (epoch 秒 UTC) |
+| text | TEXT | 内容（例: 「アンテナ間距離 1.5m に変更」）。条件変更点をデータに刻む用途 |
 
 ### handover_events — ハンドオーバー予測/記録
 

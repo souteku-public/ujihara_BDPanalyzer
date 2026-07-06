@@ -39,6 +39,12 @@ CREATE TABLE IF NOT EXISTS load_tests (
 );
 CREATE INDEX IF NOT EXISTS idx_load_ts ON load_tests(ts);
 
+CREATE TABLE IF NOT EXISTS markers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL, text TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_markers_ts ON markers(ts);
+
 CREATE TABLE IF NOT EXISTS handover_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL, constellation TEXT, from_sat TEXT, to_sat TEXT,
@@ -83,6 +89,14 @@ class Storage:
         keys = ("ts", "session", "direction", "offered_bps", "achieved_bps",
                 "loss_pct", "jitter_ms", "rtt_ms")
         self._insert("load_tests", {k: row.get(k) for k in keys})
+
+    def add_marker(self, ts: float, text: str) -> None:
+        """実験マーカー (例: 'アンテナ間距離 1.5m に変更') を記録."""
+        self._insert("markers", {"ts": ts, "text": (text or "").strip()[:500]})
+
+    def recent_markers(self, since_ts: float) -> List[Dict[str, Any]]:
+        return self._query("SELECT * FROM markers WHERE ts>=? ORDER BY ts",
+                           (since_ts,))
 
     # ---- 読み出し --------------------------------------------------------
     def _query(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:

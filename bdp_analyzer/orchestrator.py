@@ -187,6 +187,35 @@ class Orchestrator:
         self.latest_serving = serving
         for e in events:
             self.storage.add_handover(e)
+        self._emit_sinr_model(serving)
+
+    def _emit_sinr_model(self, serving: Dict[str, Any]) -> None:
+        """接続衛星の距離・仰角から理論 SINR を計算し、実測と同じ形式で記録.
+
+        source="model:<constellation>" / kind="model" の RFSample として保存
+        されるため、実測 SINR とそのまま重ね描き・CSV 比較ができる。
+        """
+        cfgm = self.config.raw.get("sinr_model") or {}
+        if not cfgm.get("enabled"):
+            return
+        from .model import RFSample
+        from .handover.linkbudget import estimate_sinr_db, PARAM_KEYS
+        now = time.time()
+        for con, info in (serving or {}).items():
+            if not info or info.get("elevation_deg") is None \
+                    or info.get("range_km") is None:
+                continue
+            params = {k: float(v) for k, v in (cfgm.get(con) or {}).items()
+                      if k in PARAM_KEYS}
+            est = estimate_sinr_db(range_km=float(info["range_km"]),
+                                   elevation_deg=float(info["elevation_deg"]),
+                                   **params)
+            self.storage.add_rf(RFSample(
+                ts=now, source=f"model:{con}", kind="model",
+                sinr_db=round(est, 2),
+                elevation_deg=info.get("elevation_deg"),
+                azimuth_deg=info.get("azimuth_deg"),
+                satellite_id=info.get("satellite")))
 
     # ---- ジョブ登録 / 制御 ---------------------------------------------------
     def _register(self, job_id: str, *, label: str, kind: str, interval_s: float,

@@ -106,15 +106,17 @@ class HandoverPredictor:
             # 各衛星の仰角(度)を時間配列で一括計算し、行列 alt[sat][step] を作る
             alt_rows = []
             az_rows = []
+            dist_rows = []
             names = []
             for sat in sats:
                 topo = (sat - self._observer).at(times)
-                alt, az, _dist = topo.altaz()
+                alt, az, dist = topo.altaz()
                 a = alt.degrees
                 if float(np.max(a)) < self.mask:
                     continue  # この窓では一度も可視にならない
                 alt_rows.append(a)
                 az_rows.append(az.degrees)
+                dist_rows.append(dist.km)
                 names.append(sat.name)
             if not alt_rows:
                 serving_now[con] = None
@@ -122,6 +124,7 @@ class HandoverPredictor:
 
             alt_mat = np.vstack(alt_rows)          # shape (S, T)
             az_mat = np.vstack(az_rows)
+            dist_mat = np.vstack(dist_rows)
             masked = np.where(alt_mat >= self.mask, alt_mat, -1.0)
 
             # 各時刻でサービス衛星 = 仰角最大。可視ゼロなら -1。
@@ -135,6 +138,7 @@ class HandoverPredictor:
                     "satellite": names[i0],
                     "elevation_deg": round(float(alt_mat[i0, 0]), 2),
                     "azimuth_deg": round(float(az_mat[i0, 0]), 2),
+                    "range_km": round(float(dist_mat[i0, 0]), 1),
                     "visible_count": int((masked[:, 0] >= 0).sum()),
                 }
             else:

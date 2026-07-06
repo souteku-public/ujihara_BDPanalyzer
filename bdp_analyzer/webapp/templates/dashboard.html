@@ -168,6 +168,17 @@
     </section>
 
     <section class="card full">
+      <h2>SINR 実測 vs 理論値（干渉評価）</h2>
+      <canvas id="chSinrModel"></canvas>
+      <div id="deltaInfo" class="hint" style="margin-top:6px"></div>
+      <div class="addform">
+        <input id="mkText" placeholder="実験マーカー (例: アンテナ間距離 1.5m に変更)">
+        <button onclick="addMarker()">📌 記録</button>
+      </div>
+      <div id="mkList" class="hint"></div>
+    </section>
+
+    <section class="card full">
       <h2>SINR vs スループット</h2>
       <canvas id="chSinrTp"></canvas>
     </section>
@@ -215,7 +226,8 @@ async function refreshSources() {
 
 async function refreshRF() {
   const rf = await getJSON('/api/rf?'+q());
-  const last = rf[rf.length-1] || {};
+  const meas = rf.filter(r=>r.kind!=='model');   // KPI は実測のみから
+  const last = meas[meas.length-1] || {};
   const kpi = [
     ['SINR', last.sinr_db!=null? last.sinr_db.toFixed(1):'—', 'dB'],
     ['方位角', last.azimuth_deg!=null? last.azimuth_deg.toFixed(0):'—', '°'],
@@ -280,7 +292,8 @@ async function refreshCharts(rf) {
   const rttRows = s => { const c = bySes('rtt')(s);
                          return c.length ? c : bySes('downlink')(s); };
 
-  const rfSinr = rf.filter(r=>r.sinr_db!=null).map(r=>({x:r.ts*1000,y:r.sinr_db}));
+  const rfSinr = rf.filter(r=>r.sinr_db!=null && r.kind!=='model')
+                   .map(r=>({x:r.ts*1000,y:r.sinr_db}));
   const sinrDs = { label:'SINR (dB)', yAxisID:'y1', data:rfSinr, borderColor:'#ffb454', tension:.2 };
 
   lineChart('#chSinrTp', { type:'line', options:baseOpts(['Mbps','SINR dB']), data:{ datasets:[
@@ -303,6 +316,64 @@ async function refreshCharts(rf) {
     shown.map(s => ({ label:`${s} Loss`, yAxisID:'y', data:pts(rttRows(s), n=>n.loss_pct),
                       borderColor:sessionColor(s), tension:.2, pointRadius:0, borderWidth:1.5 })),
   }});
+}
+
+// ---- SINR 実測 vs 理論値 (干渉評価) ----------------------------------------
+const CON_OF_KIND = { starlink:'starlink', kymeta:'oneweb', intellian:'oneweb' };
+
+async function refreshModelChart() {
+  // ソースフィルタに関わらず全ソースを取得して重ね描き
+  const all = await getJSON(`/api/rf?minutes=${$('#minutes').value}`);
+  const withSinr = all.filter(r=>r.sinr_db!=null);
+  const sources = [...new Set(withSinr.map(r=>r.source))];
+  if (!sources.length) { return; }
+
+  const dsets = sources.map(src => {
+    const isModel = src.startsWith('model:');
+    return {
+      label: isModel ? `理論 ${src.slice(6)}` : `実測 ${src}`,
+      yAxisID: 'y',
+      data: withSinr.filter(r=>r.source===src).map(r=>({x:r.ts*1000,y:r.sinr_db})),
+      borderColor: sessionColor(src),
+      borderDash: isModel ? [8,4] : undefined,
+      pointRadius: 0, borderWidth: isModel ? 2 : 1.5, tension:.2,
+    };
+  });
+  lineChart('#chSinrModel', { type:'line', options:baseOpts(['SINR dB']),
+                              data:{ datasets:dsets } });
+
+  // Δ(実測 − 理論): 各コンステレーションの最新値同士で計算
+  const latest = src => { const rows = withSinr.filter(r=>r.source===src);
+                          return rows.length ? rows[rows.length-1].sinr_db : null; };
+  const deltas = [];
+  for (const con of ['starlink','oneweb']) {
+    const model = latest(`model:${con}`);
+    if (model==null) continue;
+    const measRows = withSinr.filter(r=>CON_OF_KIND[r.kind]===con);
+    if (!measRows.length) continue;
+    const meas = measRows[measRows.length-1].sinr_db;
+    deltas.push(`<b>${con}</b>: 実測 ${meas.toFixed(1)} − 理論 ${model.toFixed(1)} = `+
+      `<b style="color:${meas-model < -3 ? '#ff7a7a' : '#6de3a1'}">Δ ${(meas-model).toFixed(1)} dB</b>`);
+  }
+  $('#deltaInfo').innerHTML = deltas.length
+    ? 'Δ(実測−理論) が干渉・降雨・遮蔽等による劣化の推定量: ' + deltas.join(' ／ ')
+    : '理論値は EIRP/G/T のキャリブレーション前提の推定です (docs 参照)';
+}
+
+async function refreshMarkers() {
+  const mks = await getJSON(`/api/markers?minutes=${Math.max($('#minutes').value, 1440)}`);
+  $('#mkList').innerHTML = mks.slice(-8).reverse()
+    .map(m=>`📌 ${new Date(m.ts*1000).toLocaleString('ja-JP')} — ${m.text}`)
+    .join('<br>');
+}
+
+async function addMarker() {
+  const text = $('#mkText').value.trim();
+  if (!text) { alert('マーカーの内容を入力してください'); return; }
+  await fetch('/api/markers', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({text})});
+  $('#mkText').value = '';
+  refreshMarkers();
 }
 
 // ---- 計測コントロール ----------------------------------------------------
@@ -507,6 +578,8 @@ async function refresh() {
   await refreshNetinfo();
   const rf = await refreshRF();
   await refreshCharts(rf);
+  await refreshModelChart();
+  await refreshMarkers();
   await refreshServing();
   if (!ltTimer) pollLoadTest();   // 過去の実行結果があれば表示
   $('#updated').textContent = '更新: ' + new Date().toLocaleTimeString('ja-JP');
