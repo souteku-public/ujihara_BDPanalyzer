@@ -91,17 +91,22 @@ netqual:
   # ここには常用の測定先だけ書けばよい。
   # 衛星なしの Ether / Wi-Fi 品質チェックも、LAN 内の相手 PC で
   # `python -m bdp_analyzer receiver` を起動して host に指定するだけ。
+  # マルチ NIC (USB-Ether 等で複数回線を同時接続) の場合は、測定先ごとに
+  # bind_ip = そのアダプタの自分側 IP を指定すると、測定トラフィックの
+  # 送信元がそのアダプタに固定される (= 回線ごとの同時測定が可能)。
+  # bind_ip 未指定なら OS のデフォルトルートで送信される。
   targets:
     - label: "Starlink経由"
       host: "203.0.113.10"     # 対向 PC の到達アドレス
       enabled: true
       rtt_monitor: false       # true で常時 RTT モニタ (1 秒解像度) も起動
+      # bind_ip: "192.168.1.100"   # Starlink 側アダプタの自分の IP
     - label: "社内有線LAN"
       host: "192.168.1.20"
       enabled: false           # UI から ON にするまで停止
-    # - label: "Wi-Fi"
-    #   host: "192.168.1.30"
-    #   interval_s: 10
+    # - label: "OneWeb経由"
+    #   host: "203.0.113.10"       # 同じ対向でも別アダプタ経由で測れる
+    #   bind_ip: "10.0.50.23"      # OneWeb 側アダプタの自分の IP
 
   # (旧形式) peer_host: "203.0.113.10" も引き続き使用可 (targets が無い場合のみ)
 

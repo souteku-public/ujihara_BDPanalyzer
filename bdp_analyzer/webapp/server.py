@@ -119,7 +119,8 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
             body.get("label", ""), body.get("host", ""),
             control_port=body.get("control_port"),
             udp_port=body.get("udp_port"),
-            interval_s=body.get("interval_s"))
+            interval_s=body.get("interval_s"),
+            bind_ip=(body.get("bind_ip") or "").strip() or None)
         if job_id is None:
             return jsonify({"ok": False,
                             "error": "ホスト未指定か同名ラベルが既にあります"}), 400

@@ -307,3 +307,40 @@ def test_interval_and_settings_api():
             assert orch2.get_settings()["throughput_seconds"]["value"] == 30
         finally:
             orch2.stop()
+
+
+def test_bind_ip_multi_nic():
+    """マルチ NIC 用の送信元固定 (bind_ip) が全測定経路で機能する."""
+    import threading
+    from bdp_analyzer.netqual.server import NetqualServer
+    from bdp_analyzer.netqual import client, loadtest, rttmon
+
+    srv = NetqualServer(15771, 15772)
+    srv.start()
+    try:
+        time.sleep(0.3)
+        samples = client.measure_once(
+            "127.0.0.1", 15771, 15772, throughput_seconds=0.3,
+            udp_probe_count=5, udp_probe_interval_ms=5, bind_ip="127.0.0.1")
+        assert samples[0].throughput_bps > 0
+        assert samples[0].rtt_ms is not None
+
+        r = loadtest.run_sweep(
+            "127.0.0.1", 15771, 15772, direction="downlink",
+            rates_bps=[2e6], step_seconds=1, session="lo",
+            bind_ip="127.0.0.1")[0]
+        assert r.get("error") is None and r["achieved_bps"] > 1e6
+
+        out = []
+        stop = threading.Event()
+        t = threading.Thread(target=rttmon.run_monitor, daemon=True, kwargs=dict(
+            host="127.0.0.1", udp_port=15772, stop=stop, on_sample=out.append,
+            session="lo", probe_interval_ms=100, agg_seconds=1,
+            bind_ip="127.0.0.1"))
+        t.start()
+        time.sleep(2.5)
+        assert len(out) >= 1 and out[0].rtt_ms is not None
+        stop.set()
+        t.join(timeout=2)
+    finally:
+        srv.stop()

@@ -14,6 +14,9 @@ beautifulsoup4>=4.12
 # Intellian などが SNMP を提供する場合のみ
 pysnmp>=4.4
 
+# マルチ NIC 測定でアダプタ一覧を名前付きで表示したい場合 (無くても動作)
+psutil>=5.9
+
 # 注意:
 #   Starlink コレクタは `grpcurl` バイナリ (https://github.com/fullstorydev/grpcurl) を
 #   利用します。pip ではなく OS 側にインストールしてください。

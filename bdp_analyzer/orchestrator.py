@@ -172,6 +172,7 @@ class Orchestrator:
             udp_probe_interval_ms=float(target.get("udp_probe_interval_ms",
                                                    d["udp_probe_interval_ms"])),
             session=target.get("label") or target["host"],
+            bind_ip=target.get("bind_ip"),
         )
         for s in samples:
             self.storage.add_net(s)
@@ -222,7 +223,8 @@ class Orchestrator:
                         stop=stop, on_sample=self.storage.add_net,
                         session=meta.get("label") or meta["host"],
                         probe_interval_ms=d["rtt_probe_interval_ms"],
-                        agg_seconds=d["rtt_agg_seconds"]))
+                        agg_seconds=d["rtt_agg_seconds"],
+                        bind_ip=meta.get("bind_ip")))
                 j["thread"].start()
         elif j["thread"] is None:
             j["thread"] = _Periodic(job_id, j["interval_s"], j["fn"])
@@ -342,11 +344,13 @@ class Orchestrator:
             meta = {"label": label, "host": host, **{
                 k: v for k, v in overrides.items() if v is not None}}
             d = self._net_defaults()
+            detail = f"→ {host}" + (
+                f" (src {meta['bind_ip']})" if meta.get("bind_ip") else "")
             self._register(
                 job_id, label=label, kind="net",
                 interval_s=float(meta.get("interval_s", d["interval_s"])),
                 fn=lambda t=meta: self._net_job(t),
-                enabled=enabled, removable=True, detail=f"→ {host}", meta=meta)
+                enabled=enabled, removable=True, detail=detail, meta=meta)
             self._register_rttmon(slug, meta, rtt_enabled, removable=True)
             self._save_state()
         return job_id
@@ -371,6 +375,17 @@ class Orchestrator:
     def get_netinfo(self) -> Dict[str, Any]:
         import socket as _s
         ips = set()
+        adapters: List[Dict[str, str]] = []
+        # psutil があればアダプタ名付きで全 NIC を列挙 (マルチ NIC 測定用)
+        try:
+            import psutil  # type: ignore
+            for name, addrs in psutil.net_if_addrs().items():
+                for a in addrs:
+                    if a.family == _s.AF_INET and not a.address.startswith("127."):
+                        adapters.append({"name": name, "ip": a.address})
+                        ips.add(a.address)
+        except ImportError:
+            pass
         try:
             s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))          # 実送信はしない (経路上の自 IP を得る)
@@ -387,6 +402,7 @@ class Orchestrator:
         return {
             "hostname": _s.gethostname(),
             "local_ips": sorted(ips),
+            "adapters": adapters,
             "global_ip": self._global_ip,
             "profile": dict(self.net_profile),
         }
@@ -475,6 +491,7 @@ class Orchestrator:
                 direction=direction, rates_bps=rates_bps,
                 step_seconds=step_seconds,
                 session=meta.get("label") or meta.get("host"),
+                bind_ip=meta.get("bind_ip"),
                 on_step=on_step)
         except Exception as e:  # noqa: BLE001
             with self._lock:
@@ -534,13 +551,15 @@ class Orchestrator:
                 slug = _slug(label)
                 job_id = f"net:{slug}"
                 d = self._net_defaults()
+                detail = f"→ {t.get('host')}" + (
+                    f" (src {t['bind_ip']})" if t.get("bind_ip") else "")
                 self._register(job_id, label=label, kind="net",
                                interval_s=interval(job_id, float(
                                    t.get("interval_s", d["interval_s"]))),
                                fn=lambda tt=t: self._net_job(tt),
                                enabled=initial(job_id, measure_default
                                                and t.get("enabled", True)),
-                               detail=f"→ {t.get('host')}", meta=dict(t))
+                               detail=detail, meta=dict(t))
                 self._register_rttmon(
                     slug, dict(t),
                     enabled=initial(f"rttmon:{slug}",

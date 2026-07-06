@@ -27,10 +27,16 @@ _FINALIZE_GRACE_S = 0.4   # 窓を閉じる前に遅延到着を待つ時間
 def run_monitor(*, host: str, udp_port: int, stop: threading.Event,
                 on_sample: Callable[[NetSample], None], session: str,
                 probe_interval_ms: float = 200.0,
-                agg_seconds: float = 1.0) -> None:
-    """stop がセットされるまで RTT を監視し続ける (専用スレッドで実行する)."""
+                agg_seconds: float = 1.0,
+                bind_ip: str | None = None) -> None:
+    """stop がセットされるまで RTT を監視し続ける (専用スレッドで実行する).
+
+    bind_ip 指定時は送信元をそのアダプタ IP に固定する (マルチ NIC 用)。
+    """
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        if bind_ip:
+            sock.bind((bind_ip, 0))
         sock.connect((host, udp_port))
     except OSError as e:
         log.error("[%s] RTT モニタ開始失敗: %s", session, e)

@@ -83,11 +83,15 @@
       <div class="addform">
         <input id="tLabel" placeholder="ラベル (例: 社内LAN / Wi-Fi)">
         <input id="tHost" placeholder="相手ホスト (IPアドレス)">
+        <input id="tBind" list="bindips" placeholder="送信元IP (マルチNIC時のみ)">
+        <datalist id="bindips"></datalist>
         <button onclick="addTarget()">＋ 測定先を追加</button>
       </div>
       <div class="hint">
         Ether / Wi-Fi など衛星なしの品質チェック: 相手 PC で
         <code>python -m bdp_analyzer receiver</code> を起動し、その IP を上で追加。
+        <b>複数回線を同時に測る場合</b>は「送信元IP」に使いたいアダプタの IP を指定
+        (候補はネットワーク情報パネルのアダプタ一覧から選択可)。
         トグルの ON/OFF は即時反映され、再起動後も保持されます。
       </div>
     </section>
@@ -369,13 +373,14 @@ async function toggleJob(id, enabled) {
 
 async function addTarget() {
   const label = $('#tLabel').value.trim(), host = $('#tHost').value.trim();
+  const bind = $('#tBind').value.trim();
   if (!host) { alert('相手ホスト (IP) を入力してください'); return; }
   const r = await fetch('/api/targets', { method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({label: label || host, host}) });
+    body:JSON.stringify({label: label || host, host, bind_ip: bind || null}) });
   const body = await r.json();
   if (!body.ok) { alert('追加できません: ' + (body.error||'')); return; }
-  $('#tLabel').value = ''; $('#tHost').value = '';
+  $('#tLabel').value = ''; $('#tHost').value = ''; $('#tBind').value = '';
   refreshJobs();
 }
 
@@ -400,10 +405,15 @@ async function refreshNetinfo() {
   const ni = await getJSON('/api/netinfo');
   const LT = {dhcp_private:'DHCP (プライベートIP)', static_global:'固定グローバルIP',
               cgnat:'CGNAT', unknown:'不明'};
+  const adap = (ni.adapters||[]).length
+    ? `アダプタ: <b>${ni.adapters.map(a=>`${a.name} (${a.ip})`).join(' ／ ')}</b>`
+    : `ローカルIP: <b>${(ni.local_ips||[]).join(', ')||'—'}</b>`;
   $('#netinfoAuto').innerHTML =
-    `ホスト名: <b>${ni.hostname||'—'}</b> ／ ローカルIP: <b>${(ni.local_ips||[]).join(', ')||'—'}</b>` +
+    `ホスト名: <b>${ni.hostname||'—'}</b> ／ ${adap}` +
     ` ／ グローバルIP: <b>${ni.global_ip||'未取得'}</b>` +
     (ni.profile?.line_type ? ` ／ 回線種別: <b>${LT[ni.profile.line_type]||ni.profile.line_type}</b>` : '');
+  $('#bindips').innerHTML = (ni.local_ips||[])
+    .map(ip=>`<option value="${ip}">`).join('');
   if (!profileLoaded && ni.profile) {   // 初回のみフォームへ反映 (入力中の上書き防止)
     $('#npLineType').value = ni.profile.line_type || '';
     $('#npPeer').value = ni.profile.peer_global_ip || '';

@@ -25,9 +25,16 @@ _UP_PAYLOAD = b"U" * CHUNK
 _END = b"__END__"
 
 
-def _tcp_downlink_bps(host: str, port: int, seconds: float, timeout: float) -> Optional[float]:
+def _src(bind_ip: Optional[str]):
+    """バインド指定 (マルチ NIC で送信元アダプタを固定する場合) を返す."""
+    return (bind_ip, 0) if bind_ip else None
+
+
+def _tcp_downlink_bps(host: str, port: int, seconds: float, timeout: float,
+                      bind_ip: Optional[str] = None) -> Optional[float]:
     try:
-        with socket.create_connection((host, port), timeout=timeout) as s:
+        with socket.create_connection((host, port), timeout=timeout,
+                                      source_address=_src(bind_ip)) as s:
             s.sendall(f"TP_DOWN {seconds}\n".encode())
             s.settimeout(seconds + timeout)
             total, start = 0, time.monotonic()
@@ -43,9 +50,11 @@ def _tcp_downlink_bps(host: str, port: int, seconds: float, timeout: float) -> O
         return None
 
 
-def _tcp_uplink_bps(host: str, port: int, seconds: float, timeout: float) -> Optional[float]:
+def _tcp_uplink_bps(host: str, port: int, seconds: float, timeout: float,
+                    bind_ip: Optional[str] = None) -> Optional[float]:
     try:
-        with socket.create_connection((host, port), timeout=timeout) as s:
+        with socket.create_connection((host, port), timeout=timeout,
+                                      source_address=_src(bind_ip)) as s:
             s.sendall(f"TP_UP {seconds}\n".encode())
             deadline = time.monotonic() + seconds
             start = time.monotonic()
@@ -71,13 +80,15 @@ def _tcp_uplink_bps(host: str, port: int, seconds: float, timeout: float) -> Opt
 
 
 def _udp_stats(host: str, port: int, count: int, interval_ms: float,
-               timeout: float) -> dict:
+               timeout: float, bind_ip: Optional[str] = None) -> dict:
     """UDP エコーで RTT / jitter / loss を測る."""
     result = {"rtt_ms": None, "rtt_min_ms": None, "rtt_max_ms": None,
               "jitter_ms": None, "loss_pct": None}
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(timeout)
+        if bind_ip:
+            s.bind((bind_ip, 0))
         s.connect((host, port))
     except OSError as e:
         log.warning("UDP ソケット作成失敗: %s", e)
@@ -135,12 +146,18 @@ def _udp_stats(host: str, port: int, count: int, interval_ms: float,
 def measure_once(host: str, control_port: int, udp_port: int, *,
                  throughput_seconds: float = 5, udp_probe_count: int = 200,
                  udp_probe_interval_ms: float = 20, timeout: float = 8,
-                 session: Optional[str] = None) -> List[NetSample]:
-    """1 サイクル測定し、downlink/uplink の NetSample を返す."""
+                 session: Optional[str] = None,
+                 bind_ip: Optional[str] = None) -> List[NetSample]:
+    """1 サイクル測定し、downlink/uplink の NetSample を返す.
+
+    bind_ip を指定すると全ソケットの送信元をそのアダプタ IP に固定する
+    (マルチ NIC で回線ごとに測定を分ける用途)。
+    """
     session = session or host
-    down = _tcp_downlink_bps(host, control_port, throughput_seconds, timeout)
-    up = _tcp_uplink_bps(host, control_port, throughput_seconds, timeout)
-    udp = _udp_stats(host, udp_port, udp_probe_count, udp_probe_interval_ms, timeout)
+    down = _tcp_downlink_bps(host, control_port, throughput_seconds, timeout, bind_ip)
+    up = _tcp_uplink_bps(host, control_port, throughput_seconds, timeout, bind_ip)
+    udp = _udp_stats(host, udp_port, udp_probe_count, udp_probe_interval_ms,
+                     timeout, bind_ip)
     now = time.time()
 
     common = dict(session=session, **udp)
