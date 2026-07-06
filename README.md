@@ -357,6 +357,8 @@ Mini はルータ一体型なので、開通済みの Mini の Wi-Fi（または
 ## 機器ごとの接続方法・注意点
 
 実機のフィールドマッピングや取得可否は **[docs/devices.md](docs/devices.md)** を参照。
+受信側に使う回線の種別(固定/動的/MAP-E/DS-Lite/CGNAT)の調べ方と対処は
+**[docs/network_check.md](docs/network_check.md)**。
 アーキテクチャ詳細は **[docs/architecture.md](docs/architecture.md)**。
 
 ---
