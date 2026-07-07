@@ -1,23 +1,25 @@
-# --- Core (required) ---
-PyYAML>=6.0          # 設定ファイル読み込み
-Flask>=3.0           # Web ダッシュボード
-requests>=2.31       # Kymeta/Intellian WebGUI スクレイプ・TLE 取得
+# NOTE: Keep this file ASCII-only. Japanese Windows pip reads it as CP932
+#       and fails on UTF-8 comments. See README for explanations in Japanese.
 
-# --- Optional (機能ごとに必要) ---
-# ハンドオーバー予測 (TLE + SGP4)。未インストールでも本体は起動します。
+# --- Core (required) ---
+PyYAML>=6.0
+Flask>=3.0
+requests>=2.31
+
+# --- Optional features ---
+# Handover prediction / theoretical SINR (TLE + SGP4)
 skyfield>=1.48
 numpy>=1.24
 
-# Kymeta / Intellian の HTML 解析を厳密に行いたい場合 (無くても正規表現で動作)
-beautifulsoup4>=4.12
-
-# Intellian などが SNMP を提供する場合のみ
-pysnmp>=4.4
-
-# マルチ NIC 測定でアダプタ一覧を名前付きで表示したい場合 (無くても動作)
+# Adapter names in the network info panel (multi-NIC)
 psutil>=5.9
 
-# 注意:
-#   Starlink コレクタは `grpcurl` バイナリ (https://github.com/fullstorydev/grpcurl) を
-#   利用します。pip ではなく OS 側にインストールしてください。
-#   例) apt install grpcurl / brew install grpcurl / go install ...
+# Strict HTML parsing for Kymeta/Intellian scraping (regex fallback works without)
+beautifulsoup4>=4.12
+
+# Only if the Intellian terminal provides SNMP
+pysnmp>=4.4
+
+# NOTE: The Starlink collector uses the external `grpcurl` binary
+#       (https://github.com/fullstorydev/grpcurl). Install it on the OS,
+#       not via pip. See README "Starlink Mini" section.
