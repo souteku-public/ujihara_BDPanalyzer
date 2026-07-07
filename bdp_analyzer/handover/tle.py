@@ -48,18 +48,22 @@ def fetch_tle(constellation: str, url: str, cache_dir: str,
             with open(path, "r", encoding="utf-8") as fh:
                 return _parse(fh.read())
 
-    try:
-        r = requests.get(url, timeout=20)
-        r.raise_for_status()
-        text = r.text
-        if "1 " in text and "2 " in text:
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(text)
-            log.info("TLE 更新: %s (%d 行)", constellation, len(text.splitlines()))
-            return _parse(text)
-        log.warning("TLE 応答が不正: %s", constellation)
-    except Exception as e:  # noqa: BLE001
-        log.warning("TLE 取得失敗 %s: %s (キャッシュを試行)", constellation, e)
+    # Starlink は約 8000 機 (~2MB) と大きいので、タイムアウト長め + 1 回リトライ
+    for attempt in (1, 2):
+        try:
+            r = requests.get(url, timeout=60)
+            r.raise_for_status()
+            text = r.text
+            if "1 " in text and "2 " in text:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                tles = _parse(text)
+                log.info("TLE 更新: %s (%d 機)", constellation, len(tles))
+                return tles
+            log.warning("TLE 応答が不正: %s (試行 %d/2)", constellation, attempt)
+        except Exception as e:  # noqa: BLE001
+            log.warning("TLE 取得失敗 %s (試行 %d/2): %s", constellation, attempt, e)
+        time.sleep(2)
 
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as fh:

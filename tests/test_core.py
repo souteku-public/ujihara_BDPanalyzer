@@ -453,3 +453,68 @@ def test_rain_attenuation_and_weather_integration():
                 assert csv.splitlines()[0].startswith("ts,time_iso,precip_mmh")
             finally:
                 orch.stop()
+
+
+def test_skyplot_visible_and_next():
+    """スカイプロット用: 可視衛星リストと次ハンドオーバー情報の付与."""
+    from datetime import datetime, timezone
+    from bdp_analyzer.config import GroundStation
+    from bdp_analyzer.handover.predict import HandoverPredictor
+
+    with tempfile.TemporaryDirectory() as d:
+        tle = ("SAT-A\n"
+               "1 25544U 98067A   24001.50000000  .00016717  00000-0  "
+               "10270-3 0  9002\n"
+               "2 25544  51.6400 208.9163 0002571  81.0000 279.1000 "
+               "15.49386233000000\n"
+               "SAT-B\n"
+               "1 44238U 19029A   24001.50000000  .00001000  00000-0  "
+               "10000-3 0  9995\n"
+               "2 44238  53.0000 100.0000 0001000  90.0000 270.0000 "
+               "15.05000000000000\n")
+        with open(os.path.join(d, "tle_starlink.txt"), "w") as fh:
+            fh.write(tle)
+        epoch = datetime(2024, 1, 1, 12, 0, 0,
+                         tzinfo=timezone.utc).timestamp()
+        hcfg = {"horizon_min": 100, "step_s": 15,
+                "constellations": ["starlink"],
+                "tle_sources": {"starlink": "x"}, "tle_cache_hours": 999}
+        gs = GroundStation(latitude=0, longitude=-180, altitude_m=0,
+                           elevation_mask_deg=10)
+        serving, events = HandoverPredictor(hcfg, gs, d).predict(epoch)
+        info = serving["starlink"]
+        assert info["visible"], "可視衛星リストが空"
+        v = info["visible"][0]
+        assert all(k in v for k in ("name", "el", "az", "range_km"))
+        assert any(x["name"] == info["satellite"] for x in info["visible"])
+
+    # orchestrator が next (次の切替先) を serving に付与する
+    from bdp_analyzer.config import Config
+    from bdp_analyzer.orchestrator import Orchestrator
+    from bdp_analyzer.model import HandoverEvent
+
+    class StubPredictor:
+        def predict(self, now):
+            return ({"starlink": {"satellite": "A", "elevation_deg": 50.0,
+                                  "azimuth_deg": 10.0, "range_km": 600.0,
+                                  "visible": []}},
+                    [HandoverEvent(ts=now + 120, constellation="starlink",
+                                   from_sat="A", to_sat="B",
+                                   reason="better_candidate")])
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(raw={}, ground_station=GroundStation(),
+                     db_path=os.path.join(d, "t.sqlite"), collectors=[],
+                     netqual={"enabled": False}, handover={"enabled": False},
+                     webapp={})
+        orch = Orchestrator(cfg)
+        orch.start()
+        try:
+            orch._handover_job(StubPredictor())
+            nxt = orch.latest_serving["starlink"]["next"]
+            assert nxt["to_sat"] == "B" and nxt["reason"] == "better_candidate"
+            # sinr_model セクション無しでも既定で理論値が出る (回帰)
+            assert any(r["kind"] == "model"
+                       for r in orch.storage.recent_rf(0))
+        finally:
+            orch.stop()

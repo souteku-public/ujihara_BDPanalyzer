@@ -174,6 +174,17 @@
     </section>
 
     <section class="card">
+      <h2>上空の衛星（スカイプロット）</h2>
+      <div style="display:flex;justify-content:center">
+        <canvas id="skyplot" width="360" height="360" style="max-width:100%"></canvas>
+      </div>
+      <div class="hint" id="skyinfo">
+        ●=可視衛星 ◉(白リング)=接続中と推定 ◎(橙点線)=次に切替わる予定
+        ＋=アンテナ実測の向き。中心=天頂、外周=地平線、上=北
+      </div>
+    </section>
+
+    <section class="card">
       <h2>上空の天気（定量記録・理論SINRに反映）</h2>
       <div class="kpis" id="wxkpi"></div>
       <div class="hint" id="wxnote"></div>
@@ -274,8 +285,9 @@ function refreshRF(rfView) {
   return rf;
 }
 
-async function refreshServing() {
+async function refreshServing(rfView) {
   const s = await getJSON('/api/serving');
+  drawSkyPlot(s, rfView || []);
   const hoAll = await getJSON('/api/handovers?'+q());
   const ho = hoAll.filter(h=>inView(h.constellation));   // 検証対象で絞る
   const now = Date.now()/1000;
@@ -287,7 +299,7 @@ async function refreshServing() {
     const info = s[con];
     if (!info) continue;
     const nxt = nextByCon[con];
-    const lead = nxt ? `${Math.round(nxt.ts-now)}秒後` : '—';
+    const lead = nxt ? `${Math.round(nxt.ts-now)}秒後 → ${nxt.to_sat||'(圏外)'}` : '—';
     html += `<div class="sat"><div><b>${con}</b> <span class="pill">可視 ${info.visible_count||0}</span><br>
       <span style="color:var(--muted)">サービス衛星: ${info.satellite||'なし'} `+
       (info.elevation_deg!=null?`(仰角 ${info.elevation_deg}°, 方位 ${info.azimuth_deg}°)`:'')+`</span></div>
@@ -352,6 +364,94 @@ async function refreshCharts(rf) {
     shown.map(s => ({ label:`${s} Loss`, yAxisID:'y', data:pts(rttRows(s), n=>n.loss_pct),
                       borderColor:sessionColor(s), tension:.2, pointRadius:0, borderWidth:1.5 })),
   }});
+}
+
+// ---- スカイプロット (上空の衛星の視覚表示) ----------------------------------
+const SKY_COLORS = { starlink:'#4da3ff', oneweb:'#c58bff' };
+
+function skyXY(cx, cy, R, az, el) {
+  const r = R * (90 - Math.max(el, 0)) / 90;
+  const a = az * Math.PI / 180;
+  return [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+}
+
+function drawSkyPlot(servingData, rfView) {
+  const cv = $('#skyplot'); if (!cv) return;
+  const g = cv.getContext('2d');
+  const W = cv.width, H = cv.height, cx = W/2, cy = H/2, R = Math.min(W,H)/2 - 22;
+  g.clearRect(0, 0, W, H);
+  g.font = '10px sans-serif';
+
+  // 目盛り: 仰角 0/30/60 の同心円と方位線・方位ラベル
+  g.strokeStyle = '#2a3550'; g.fillStyle = '#8b98b0'; g.lineWidth = 1;
+  for (const el of [0, 30, 60]) {
+    g.beginPath(); g.arc(cx, cy, R*(90-el)/90, 0, Math.PI*2); g.stroke();
+    g.fillText(el + '°', cx + 3, cy - R*(90-el)/90 + 11);
+  }
+  for (let az = 0; az < 360; az += 45) {
+    const [x, y] = skyXY(cx, cy, R, az, 0);
+    g.beginPath(); g.moveTo(cx, cy); g.lineTo(x, y); g.stroke();
+  }
+  g.fillStyle = '#e6ebf5'; g.font = 'bold 12px sans-serif'; g.textAlign = 'center';
+  g.fillText('N', cx, cy - R - 8); g.fillText('S', cx, cy + R + 15);
+  g.fillText('E', cx + R + 12, cy + 4); g.fillText('W', cx - R - 12, cy + 4);
+  g.textAlign = 'left'; g.font = '10px sans-serif';
+
+  const now = Date.now() / 1000;
+  const lines = [];
+  for (const con of ['starlink', 'oneweb']) {
+    if (!inView(con)) continue;
+    const info = servingData[con];
+    if (!info || !info.visible) continue;
+    const color = SKY_COLORS[con];
+    const nextSat = info.next && info.next.to_sat;
+
+    for (const v of info.visible) {
+      const [x, y] = skyXY(cx, cy, R, v.az, v.el);
+      const isServing = v.name === info.satellite;
+      const isNext = nextSat && v.name === nextSat;
+      g.fillStyle = color;
+      g.beginPath(); g.arc(x, y, isServing ? 6 : 3.5, 0, Math.PI*2); g.fill();
+      if (isServing) {                       // 接続中: 白リング + 名前
+        g.strokeStyle = '#ffffff'; g.lineWidth = 2; g.setLineDash([]);
+        g.beginPath(); g.arc(x, y, 9, 0, Math.PI*2); g.stroke();
+        g.fillStyle = '#e6ebf5';
+        g.fillText(v.name, x + 11, y + 3);
+      }
+      if (isNext) {                          // 次の切替先: 橙点線リング + 名前
+        g.strokeStyle = '#ffb454'; g.lineWidth = 2; g.setLineDash([4, 3]);
+        g.beginPath(); g.arc(x, y, 9, 0, Math.PI*2); g.stroke();
+        g.setLineDash([]);
+        g.fillStyle = '#ffb454';
+        g.fillText(v.name, x + 11, y + 3);
+        const srv = info.visible.find(s => s.name === info.satellite);
+        if (srv) {                           // 接続中→切替先の矢印 (点線)
+          const [x1, y1] = skyXY(cx, cy, R, srv.az, srv.el);
+          g.strokeStyle = '#ffb454'; g.lineWidth = 1.5; g.setLineDash([5, 4]);
+          g.beginPath(); g.moveTo(x1, y1); g.lineTo(x, y); g.stroke();
+          g.setLineDash([]);
+        }
+      }
+    }
+    const cnt = info.visible.length;
+    const nx = info.next ? `次HO ${Math.max(0, Math.round(info.next.ts - now))}秒後 → ${info.next.to_sat || '(圏外)'}` : '';
+    lines.push(`<span style="color:${color}">●</span> ${con}: 可視${cnt}機 ${nx}`);
+  }
+
+  // アンテナ実測の向き (方位/仰角がある最新実測)
+  const pointed = rfView.filter(r => r.kind !== 'model' && r.azimuth_deg != null && r.elevation_deg != null);
+  if (pointed.length) {
+    const p = pointed[pointed.length - 1];
+    const [x, y] = skyXY(cx, cy, R, p.azimuth_deg, p.elevation_deg);
+    g.strokeStyle = '#6de3a1'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(x-7, y); g.lineTo(x+7, y);
+    g.moveTo(x, y-7); g.lineTo(x, y+7); g.stroke();
+    lines.push(`<span style="color:#6de3a1">＋</span> アンテナ向き (${p.source})`);
+  }
+
+  $('#skyinfo').innerHTML = lines.length
+    ? lines.join('<br>') + '<br><span style="color:var(--muted)">中心=天頂、外周=地平線、上=北。◉白リング=接続中、◎橙点線=次の切替先</span>'
+    : 'TLE 取得・計算待ち (ハンドオーバー予測 ON で数十秒後に表示されます)';
 }
 
 // ---- SINR 実測 vs 理論値 (干渉評価) ----------------------------------------
@@ -653,7 +753,7 @@ async function refresh() {
   const wx = await refreshWeather();
   refreshModelChart(wx, rfView);
   await refreshMarkers();
-  await refreshServing();
+  await refreshServing(rfView);
   if (!ltTimer) pollLoadTest();   // 過去の実行結果があれば表示
   $('#updated').textContent = '更新: ' + new Date().toLocaleTimeString('ja-JP');
 }

@@ -189,6 +189,15 @@ class Orchestrator:
 
     def _handover_job(self, predictor: HandoverPredictor):
         serving, events = predictor.predict(time.time())
+        # 各コンステレーションの「次のハンドオーバー」をスカイプロット用に付与
+        nxt: Dict[str, Any] = {}
+        for e in events:
+            nxt.setdefault(e.constellation, {
+                "ts": e.ts, "to_sat": e.to_sat, "from_sat": e.from_sat,
+                "reason": e.reason})
+        for con, info in (serving or {}).items():
+            if info is not None:
+                info["next"] = nxt.get(con)
         self.latest_serving = serving
         for e in events:
             self.storage.add_handover(e)
@@ -218,7 +227,8 @@ class Orchestrator:
         されるため、実測 SINR とそのまま重ね描き・CSV 比較ができる。
         """
         cfgm = self.config.raw.get("sinr_model") or {}
-        if not cfgm.get("enabled"):
+        # config に sinr_model セクションが無くても既定で有効 (既定パラメータで動作)
+        if not cfgm.get("enabled", True):
             return
         from .model import RFSample
         from .handover.linkbudget import estimate_sinr_db, PARAM_KEYS

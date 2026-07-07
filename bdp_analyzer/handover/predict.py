@@ -96,20 +96,33 @@ class HandoverPredictor:
         base = datetime.fromtimestamp(now_ts, tz=timezone.utc)
         times = self._ts.from_datetimes(
             [base + timedelta(seconds=i * self.step_s) for i in range(n_steps)])
+        # 事前絞り込み用の粗い 3 時刻 (Starlink ~8000 機の全時刻計算は重いため、
+        # この窓で可視になり得ない衛星を先に除外して計算量を 1/5 程度に落とす)
+        coarse_times = self._ts.from_datetimes(
+            [base, base + timedelta(seconds=self.horizon_s / 2),
+             base + timedelta(seconds=self.horizon_s)])
 
         serving_now: Dict[str, Any] = {}
         events: List[HandoverEvent] = []
 
         for con, sats in self._sats.items():
             if not sats:
+                log.warning("%s: 衛星が 0 機です (TLE 取得失敗の可能性。"
+                            "ネットワークとログを確認)", con)
+                serving_now[con] = None
                 continue
+            t_calc = time.monotonic()
             # 各衛星の仰角(度)を時間配列で一括計算し、行列 alt[sat][step] を作る
             alt_rows = []
             az_rows = []
             dist_rows = []
             names = []
             for sat in sats:
-                topo = (sat - self._observer).at(times)
+                diff = sat - self._observer
+                a3 = diff.at(coarse_times).altaz()[0].degrees
+                if float(np.max(a3)) < self.mask - 5.0:
+                    continue  # 粗判定: この窓では可視になり得ない
+                topo = diff.at(times)
                 alt, az, dist = topo.altaz()
                 a = alt.degrees
                 if float(np.max(a)) < self.mask:
@@ -118,6 +131,8 @@ class HandoverPredictor:
                 az_rows.append(az.degrees)
                 dist_rows.append(dist.km)
                 names.append(sat.name)
+            log.debug("%s: %d 機中 %d 機を詳細計算 (%.1f 秒)",
+                      con, len(sats), len(names), time.monotonic() - t_calc)
             if not alt_rows:
                 serving_now[con] = None
                 continue
@@ -132,6 +147,19 @@ class HandoverPredictor:
             serving_vis = masked.max(axis=0) >= 0
 
             # 現在(step 0)のサービス衛星
+            # スカイプロット用: 現在可視の衛星一覧 (仰角の高い順、最大 60 機)
+            vis_order = np.argsort(-masked[:, 0])
+            visible = []
+            for i in vis_order:
+                if masked[i, 0] < 0 or len(visible) >= 60:
+                    break
+                visible.append({
+                    "name": names[int(i)],
+                    "el": round(float(alt_mat[int(i), 0]), 1),
+                    "az": round(float(az_mat[int(i), 0]), 1),
+                    "range_km": round(float(dist_mat[int(i), 0])),
+                })
+
             if serving_vis[0]:
                 i0 = int(serving_idx[0])
                 serving_now[con] = {
@@ -139,10 +167,12 @@ class HandoverPredictor:
                     "elevation_deg": round(float(alt_mat[i0, 0]), 2),
                     "azimuth_deg": round(float(az_mat[i0, 0]), 2),
                     "range_km": round(float(dist_mat[i0, 0]), 1),
-                    "visible_count": int((masked[:, 0] >= 0).sum()),
+                    "visible_count": len(visible),
+                    "visible": visible,
                 }
             else:
-                serving_now[con] = {"satellite": None, "visible_count": 0}
+                serving_now[con] = {"satellite": None, "visible_count": 0,
+                                    "visible": visible}
 
             # タイムラインを走査してサービス衛星の切替=ハンドオーバーを検出
             prev = int(serving_idx[0]) if serving_vis[0] else -1
