@@ -232,6 +232,15 @@ python -m bdp_analyzer predict --config config.yaml    # ハンドオーバー�
 
 ## ダッシュボード
 
+- **検証対象セレクタ**: ヘッダで「両方 / Starlink / OneWeb」を切替。RF 状態・SINR
+  グラフ・実測 vs 理論・衛星/ハンドオーバー表示が選択したコンステレーションだけに
+  絞られ、画面上部のバッジで「どちらの検証中か」が常に分かります。
+  選択は **URL（`?view=starlink` / `?view=oneweb`）に保持**されるため、
+  **同じアプリを複数のブラウザ窓で開き、窓ごとに別のアンテナを表示**できます
+  （例: 干渉実験で Kymeta と Starlink が同一ネットワークにいる場合、
+  `http://localhost:8080/?view=starlink` と `http://localhost:8080/?view=oneweb`
+  を並べる。収集は 1 プロセスで両方同時に行われ、表示だけが分かれます）。
+  ハンドオーバー予測はもともと **Starlink・OneWeb の両方**を対象にしています。
 - **計測コントロール**: 何を計測するかを画面上のトグルで選択。
   - RF コレクタ（Starlink / Kymeta / Intellian）を機器ごとに ON/OFF
     （全 LEO を同時接続しない運用に対応。config で `enabled: false` でも登録され、UI から起動可）
