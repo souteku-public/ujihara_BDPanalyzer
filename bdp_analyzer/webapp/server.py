@@ -32,6 +32,9 @@ _EXPORT_COLUMNS = {
                  "reason", "from_elevation_deg", "to_elevation_deg",
                  "lead_time_s"],
     "markers": ["ts", "time_iso", "text"],
+    "weather": ["ts", "time_iso", "precip_mmh", "rain_mmh", "cloud_cover_pct",
+                "temp_c", "humidity_pct", "weather_code", "wind_speed_ms",
+                "rain_atten_ku45_db"],
 }
 
 
@@ -182,6 +185,10 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
     def api_loadtest_history():
         return jsonify(storage.recent_load_tests(_since()))
 
+    @app.route("/api/weather")
+    def api_weather():
+        return jsonify(storage.recent_weather(_since()))
+
     # ---- 実験マーカー (アンテナ間距離の変更等をデータに刻む) ------------------
     @app.route("/api/markers")
     def api_markers():
@@ -205,6 +212,7 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
             "load": storage.recent_load_tests,
             "handover": storage.recent_handovers,
             "markers": storage.recent_markers,
+            "weather": storage.recent_weather,
         }
         if kind not in fetchers:
             return jsonify({"error": "rf / net / load / handover"}), 404

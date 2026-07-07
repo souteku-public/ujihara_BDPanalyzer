@@ -389,3 +389,67 @@ def test_sinr_model_and_markers():
                 "/export/markers.csv?minutes=60").data.decode("utf-8-sig")
         finally:
             orch.stop()
+
+
+def test_rain_attenuation_and_weather_integration():
+    """降雨減衰モデルと気象モニタ → 理論 SINR への反映・定量記録."""
+    from unittest.mock import patch, MagicMock
+    from bdp_analyzer.handover.linkbudget import (rain_attenuation_db,
+                                                  estimate_sinr_db)
+    from bdp_analyzer.config import Config, GroundStation
+    from bdp_analyzer.orchestrator import Orchestrator
+    from bdp_analyzer.webapp.server import create_app
+
+    # 雨量・仰角に対して物理的に妥当な傾向
+    assert rain_attenuation_db(0, 45) == 0.0
+    a5, a25 = rain_attenuation_db(5, 45), rain_attenuation_db(25, 45)
+    assert 0 < a5 < a25 < rain_attenuation_db(25, 20)
+    assert estimate_sinr_db(range_km=600, elevation_deg=50, rain_mmh=25) \
+        < estimate_sinr_db(range_km=600, elevation_deg=50) - 3
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(
+            raw={"sinr_model": {"enabled": True, "use_weather": True,
+                                "starlink": {"eirp_dbw": 36.0}},
+                 "weather": {"enabled": True, "interval_s": 300}},
+            ground_station=GroundStation(latitude=35.68, longitude=139.65),
+            db_path=os.path.join(d, "t.sqlite"), collectors=[],
+            netqual={"enabled": False}, handover={"enabled": False}, webapp={})
+
+        fake = MagicMock()
+        fake.json.return_value = {"current": {
+            "temperature_2m": 24.5, "relative_humidity_2m": 88,
+            "precipitation": 5.0, "rain": 5.0, "cloud_cover": 95,
+            "weather_code": 63, "wind_speed_10m": 6.2}}
+        fake.raise_for_status = lambda: None
+
+        with patch("bdp_analyzer.weather.requests.get", return_value=fake):
+            orch = Orchestrator(cfg)
+            orch.start()
+            try:
+                time.sleep(0.5)
+                wx = orch.storage.recent_weather(0)
+                assert wx and wx[-1]["precip_mmh"] == 20.0   # 15分5mm → 20mm/h
+                assert wx[-1]["rain_atten_ku45_db"] > 1.0
+
+                serving = {"starlink": {"satellite": "SL",
+                                        "elevation_deg": 50.0,
+                                        "azimuth_deg": 100.0,
+                                        "range_km": 600.0}}
+                orch._emit_sinr_model(serving)          # 雨あり
+                rain_val = [r for r in orch.storage.recent_rf(0)
+                            if r["kind"] == "model"][-1]["sinr_db"]
+                orch.latest_weather = {}
+                orch._emit_sinr_model(serving)          # 晴天
+                clear_val = [r for r in orch.storage.recent_rf(0)
+                             if r["kind"] == "model"][-1]["sinr_db"]
+                assert rain_val < clear_val - 3
+
+                c = create_app(orch.storage, orch).test_client()
+                assert c.get("/api/weather?minutes=60").get_json()[-1][
+                    "precip_mmh"] == 20.0
+                csv = c.get("/export/weather.csv?minutes=60"
+                            ).data.decode("utf-8-sig")
+                assert csv.splitlines()[0].startswith("ts,time_iso,precip_mmh")
+            finally:
+                orch.stop()

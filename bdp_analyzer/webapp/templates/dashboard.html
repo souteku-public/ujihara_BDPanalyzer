@@ -167,6 +167,12 @@
       <div id="serving"></div>
     </section>
 
+    <section class="card">
+      <h2>上空の天気（定量記録・理論SINRに反映）</h2>
+      <div class="kpis" id="wxkpi"></div>
+      <div class="hint" id="wxnote"></div>
+    </section>
+
     <section class="card full">
       <h2>SINR 実測 vs 理論値（干渉評価）</h2>
       <canvas id="chSinrModel"></canvas>
@@ -321,7 +327,34 @@ async function refreshCharts(rf) {
 // ---- SINR 実測 vs 理論値 (干渉評価) ----------------------------------------
 const CON_OF_KIND = { starlink:'starlink', kymeta:'oneweb', intellian:'oneweb' };
 
-async function refreshModelChart() {
+const WMO_JA = {0:'快晴',1:'晴れ',2:'一部曇り',3:'曇り',45:'霧',48:'霧氷',51:'霧雨(弱)',
+  53:'霧雨',55:'霧雨(強)',61:'雨(弱)',63:'雨',65:'雨(強)',66:'着氷性の雨',67:'着氷性の雨(強)',
+  71:'雪(弱)',73:'雪',75:'雪(強)',80:'にわか雨(弱)',81:'にわか雨',82:'にわか雨(強)',
+  95:'雷雨',96:'雷雨(雹)',99:'雷雨(激しい雹)'};
+
+async function refreshWeather() {
+  const wx = await getJSON(`/api/weather?minutes=${$('#minutes').value}`);
+  const w = wx[wx.length-1];
+  if (!w) {
+    $('#wxkpi').innerHTML = '<span class="hint">気象データ待ち (気象モニタが OFF か取得失敗)</span>';
+    return wx;
+  }
+  const kpi = [
+    ['降水強度', w.precip_mmh!=null? w.precip_mmh.toFixed(1):'—', 'mm/h'],
+    ['雨減衰 (Ku,45°)', w.rain_atten_ku45_db!=null? w.rain_atten_ku45_db.toFixed(2):'—', 'dB'],
+    ['雲量', w.cloud_cover_pct!=null? w.cloud_cover_pct.toFixed(0):'—', '%'],
+    ['気温', w.temp_c!=null? w.temp_c.toFixed(1):'—', '℃'],
+    ['湿度', w.humidity_pct!=null? w.humidity_pct.toFixed(0):'—', '%'],
+    ['風速', w.wind_speed_ms!=null? w.wind_speed_ms.toFixed(1):'—', 'm/s'],
+  ];
+  $('#wxkpi').innerHTML = kpi.map(k=>`<div class="kpi"><div class="v">${k[1]}<span style="font-size:13px;color:var(--muted)"> ${k[2]}</span></div><div class="l">${k[0]}</div></div>`).join('');
+  $('#wxnote').textContent = `天気: ${WMO_JA[w.weather_code]||('コード'+w.weather_code)} ／ `+
+    `${new Date(w.ts*1000).toLocaleTimeString('ja-JP')} 時点 (Open-Meteo)。`+
+    `降水強度は理論 SINR の降雨減衰として自動反映されます。`;
+  return wx;
+}
+
+async function refreshModelChart(wx) {
   // ソースフィルタに関わらず全ソースを取得して重ね描き
   const all = await getJSON(`/api/rf?minutes=${$('#minutes').value}`);
   const withSinr = all.filter(r=>r.sinr_db!=null);
@@ -339,8 +372,14 @@ async function refreshModelChart() {
       pointRadius: 0, borderWidth: isModel ? 2 : 1.5, tension:.2,
     };
   });
-  lineChart('#chSinrModel', { type:'line', options:baseOpts(['SINR dB']),
-                              data:{ datasets:dsets } });
+  if (wx && wx.length) {   // 降水強度を第 2 軸で重ねる (雨と SINR の相関が見える)
+    dsets.push({ label:'降水強度 (mm/h)', yAxisID:'y1',
+      data: wx.map(w=>({x:w.ts*1000, y:w.precip_mmh})),
+      borderColor:'#5ce1e6', backgroundColor:'rgba(92,225,230,.12)',
+      fill:true, pointRadius:0, borderWidth:1.5, tension:.2 });
+  }
+  lineChart('#chSinrModel', { type:'line',
+    options:baseOpts(['SINR dB','降水 mm/h']), data:{ datasets:dsets } });
 
   // Δ(実測 − 理論): 各コンステレーションの最新値同士で計算
   const latest = src => { const rows = withSinr.filter(r=>r.source===src);
@@ -379,7 +418,8 @@ async function addMarker() {
 // ---- 計測コントロール ----------------------------------------------------
 const JOB_GROUPS = { rf:'電波 (RF) コレクタ', net:'通信品質 測定先',
                      rttmon:'常時 RTT モニタ (1秒解像度)',
-                     handover:'ハンドオーバー予測', server:'受信サーバ' };
+                     handover:'ハンドオーバー予測',
+                     weather:'気象 (雨雲) モニタ', server:'受信サーバ' };
 
 async function refreshJobs(jobs) {
   // 間隔入力中に自動更新で消えないよう、フォーカスがある間は再描画しない
@@ -578,7 +618,8 @@ async function refresh() {
   await refreshNetinfo();
   const rf = await refreshRF();
   await refreshCharts(rf);
-  await refreshModelChart();
+  const wx = await refreshWeather();
+  await refreshModelChart(wx);
   await refreshMarkers();
   await refreshServing();
   if (!ltTimer) pollLoadTest();   // 過去の実行結果があれば表示

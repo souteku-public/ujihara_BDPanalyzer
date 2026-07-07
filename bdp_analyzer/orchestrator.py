@@ -65,6 +65,9 @@ INTERVAL_RANGES = {
                          "かかるため、それより短くしても詰まるだけ"},
     "handover": {"min": 10, "max": 3600,
                  "hint": "TLE 伝搬計算の負荷と予測の鮮度のバランス。30 秒で十分なことが多い"},
+    "weather":  {"min": 60, "max": 3600,
+                 "hint": "Open-Meteo の更新は 15 分毎のため 300 秒 (5 分) で十分。"
+                         "外部 API への負荷配慮から 60 秒未満には縮めない"},
 }
 
 # 測定パラメータの範囲・既定値 (UI の「測定設定」に表示されるメモの元データ)
@@ -106,6 +109,8 @@ class Orchestrator:
         self.latest_serving: dict = {}
         self._state_path = os.path.join(
             os.path.dirname(config.db_path) or ".", "ui_state.json")
+        # 最新の気象 (理論 SINR の降雨減衰と UI 表示に使う)
+        self.latest_weather: Dict[str, Any] = {}
         # ネットワーク情報 (UI 入力のメモ) と負荷試験の実行状態
         self.net_profile: Dict[str, Any] = {}
         self._global_ip: Optional[str] = None
@@ -189,6 +194,23 @@ class Orchestrator:
             self.storage.add_handover(e)
         self._emit_sinr_model(serving)
 
+    def _weather_job(self) -> None:
+        """上空の気象を取得し、定量値として記録 (降雨減衰の参考値付き)."""
+        from .weather import fetch_weather
+        from .handover.linkbudget import rain_attenuation_db
+        gs = self.config.ground_station
+        w = fetch_weather(gs.latitude, gs.longitude)
+        if w is None:
+            return
+        # 参考値: Ku 帯・仰角 45° 換算の降雨減衰 (定量比較用の代表値)
+        w["rain_atten_ku45_db"] = round(
+            rain_attenuation_db(w.get("precip_mmh") or 0.0, 45.0), 3)
+        self.latest_weather = w
+        self.storage.add_weather(w)
+        log.info("気象: 降水 %.1f mm/h / 雲量 %s%% / 気温 %s℃ / 雨減衰(Ku,45°) %.2f dB",
+                 w.get("precip_mmh") or 0, w.get("cloud_cover_pct"),
+                 w.get("temp_c"), w["rain_atten_ku45_db"])
+
     def _emit_sinr_model(self, serving: Dict[str, Any]) -> None:
         """接続衛星の距離・仰角から理論 SINR を計算し、実測と同じ形式で記録.
 
@@ -201,6 +223,10 @@ class Orchestrator:
         from .model import RFSample
         from .handover.linkbudget import estimate_sinr_db, PARAM_KEYS
         now = time.time()
+        # 気象モニタの最新降水強度を降雨減衰として反映 (use_weather: false で無効化)
+        rain_mmh = 0.0
+        if cfgm.get("use_weather", True):
+            rain_mmh = float(self.latest_weather.get("precip_mmh") or 0.0)
         for con, info in (serving or {}).items():
             if not info or info.get("elevation_deg") is None \
                     or info.get("range_km") is None:
@@ -209,7 +235,7 @@ class Orchestrator:
                       if k in PARAM_KEYS}
             est = estimate_sinr_db(range_km=float(info["range_km"]),
                                    elevation_deg=float(info["elevation_deg"]),
-                                   **params)
+                                   rain_mmh=rain_mmh, **params)
             self.storage.add_rf(RFSample(
                 ts=now, source=f"model:{con}", kind="model",
                 sinr_db=round(est, 2),
@@ -321,7 +347,8 @@ class Orchestrator:
         return self.get_settings()
 
     def jobs_status(self) -> List[Dict[str, Any]]:
-        order = {"rf": 0, "net": 1, "rttmon": 2, "handover": 3, "server": 4}
+        order = {"rf": 0, "net": 1, "rttmon": 2, "handover": 3,
+                 "weather": 4, "server": 5}
         with self._lock:
             rows = []
             for j in self.jobs.values():
@@ -608,6 +635,17 @@ class Orchestrator:
                 if job_id in self.jobs and job_id in self._interval_overrides:
                     self.jobs[job_id]["interval_s"] = interval(
                         job_id, self.jobs[job_id]["interval_s"])
+
+        # 気象 (雨雲) モニタ: 理論 SINR の降雨減衰と定量記録に使う
+        wcfg = self.config.raw.get("weather") or {}
+        if wcfg.get("enabled", True):
+            self._register("weather", label="気象 (雨雲) モニタ", kind="weather",
+                           interval_s=interval("weather",
+                                               float(wcfg.get("interval_s", 300))),
+                           fn=self._weather_job,
+                           enabled=initial("weather", True),
+                           detail=f"Open-Meteo @ ({self.config.ground_station.latitude:.2f}, "
+                                  f"{self.config.ground_station.longitude:.2f})")
 
         # ハンドオーバー予測
         ho = self.config.handover

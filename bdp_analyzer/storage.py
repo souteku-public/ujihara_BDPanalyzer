@@ -39,6 +39,15 @@ CREATE TABLE IF NOT EXISTS load_tests (
 );
 CREATE INDEX IF NOT EXISTS idx_load_ts ON load_tests(ts);
 
+CREATE TABLE IF NOT EXISTS weather_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    precip_mmh REAL, rain_mmh REAL, cloud_cover_pct REAL,
+    temp_c REAL, humidity_pct REAL, weather_code INTEGER,
+    wind_speed_ms REAL, rain_atten_ku45_db REAL
+);
+CREATE INDEX IF NOT EXISTS idx_weather_ts ON weather_samples(ts);
+
 CREATE TABLE IF NOT EXISTS markers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL, text TEXT
@@ -89,6 +98,16 @@ class Storage:
         keys = ("ts", "session", "direction", "offered_bps", "achieved_bps",
                 "loss_pct", "jitter_ms", "rtt_ms")
         self._insert("load_tests", {k: row.get(k) for k in keys})
+
+    def add_weather(self, row: Dict[str, Any]) -> None:
+        keys = ("ts", "precip_mmh", "rain_mmh", "cloud_cover_pct", "temp_c",
+                "humidity_pct", "weather_code", "wind_speed_ms",
+                "rain_atten_ku45_db")
+        self._insert("weather_samples", {k: row.get(k) for k in keys})
+
+    def recent_weather(self, since_ts: float) -> List[Dict[str, Any]]:
+        return self._query(
+            "SELECT * FROM weather_samples WHERE ts>=? ORDER BY ts", (since_ts,))
 
     def add_marker(self, ts: float, text: str) -> None:
         """実験マーカー (例: 'アンテナ間距離 1.5m に変更') を記録."""

@@ -70,6 +70,18 @@ net = pd.read_sql("SELECT * FROM net_samples", con, parse_dates={"ts": "s"})
 | jitter_ms | REAL | ms | ジッタ |
 | rtt_ms | REAL | ms | **負荷時 RTT**（並行プローブによる） |
 
+### weather_samples — 上空の気象（Open-Meteo、定量記録）
+
+| 列 | 型 | 単位 | 説明 |
+|---|---|---|---|
+| ts | REAL | epoch 秒 (UTC) | 取得時刻 |
+| precip_mmh / rain_mmh | REAL | mm/h | 降水強度（15 分値×4 換算）。precip は雪等含む総降水 |
+| cloud_cover_pct | REAL | % | 雲量 |
+| temp_c / humidity_pct | REAL | ℃ / % | 気温・湿度 |
+| weather_code | INTEGER | WMO コード | 0=快晴, 3=曇り, 61-65=雨, 95=雷雨 等 |
+| wind_speed_ms | REAL | m/s | 風速 (10m) |
+| rain_atten_ku45_db | REAL | dB | **参考値**: Ku 帯・仰角 45° 換算の降雨減衰。理論 SINR には各衛星の実仰角で個別に反映される |
+
 ### markers — 実験マーカー
 
 | 列 | 型 | 説明 |
