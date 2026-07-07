@@ -7,9 +7,14 @@
 
 インターネット越しに使う想定なので、control_port(TCP) と udp_port(UDP) を
 NAT/ファイアウォールで受信側に転送しておくこと。
+
+セキュリティ: 受信ポートは認証を持たないため、`allowed_sources` (CIDR リスト)
+で送信元 IP を制限できる。指定した場合、リスト外からの TCP 接続は即切断、
+UDP パケットは無応答で破棄する (ルータのフィルタと合わせた多層防御)。
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import socket
@@ -23,6 +28,34 @@ from .protocol import (CHUNK, HELLO, OK, LOAD_PREFIX, PUNCH_PREFIX,
 log = logging.getLogger("bdp.netqual.server")
 
 _PAYLOAD = os.urandom(CHUNK)  # 送出用ダミーデータ
+
+# ---- 送信元 IP 許可リスト (未設定なら全許可) --------------------------------
+_ALLOWED_NETS: list = []
+
+
+def set_allowed_sources(cidrs) -> None:
+    """許可する送信元 CIDR を設定 (空/None で全許可)."""
+    global _ALLOWED_NETS
+    nets = []
+    for c in (cidrs or []):
+        try:
+            nets.append(ipaddress.ip_network(str(c).strip(), strict=False))
+        except ValueError:
+            log.error("allowed_sources の CIDR が不正: %r (無視)", c)
+    _ALLOWED_NETS = nets
+    if nets:
+        log.info("送信元制限: %s のみ許可", ", ".join(str(n) for n in nets))
+
+
+def _src_allowed(ip: str) -> bool:
+    if not _ALLOWED_NETS:
+        return True
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in net for net in _ALLOWED_NETS)
+
 
 # ---- 負荷試験の共有状態 (UDP ループと制御ハンドラの間で共有) ----------------
 _REG_LOCK = threading.Lock()
@@ -51,6 +84,9 @@ def _note_load_packet(src_ip: str, data: bytes) -> None:
 class _ControlHandler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
         peer = self.client_address
+        if not _src_allowed(peer[0]):
+            log.warning("許可外の送信元からの TCP 接続を拒否: %s", peer[0])
+            return
         try:
             while True:
                 line = self.rfile.readline()
@@ -178,6 +214,8 @@ def _udp_echo_loop(port: int, stop: threading.Event) -> None:
             continue
         except OSError:
             break
+        if not _src_allowed(addr[0]):           # 許可外送信元: 無応答で破棄
+            continue
         if data.startswith(LOAD_PREFIX):        # 負荷パケット: 集計のみ (echo しない)
             _note_load_packet(addr[0], data)
         elif data.startswith(PUNCH_PREFIX):     # パンチ: 送信元を登録
@@ -201,9 +239,11 @@ class NetqualServer:
     並行して常駐させるために使う。
     """
 
-    def __init__(self, control_port: int, udp_port: int):
+    def __init__(self, control_port: int, udp_port: int,
+                 allowed_sources=None):
         self.control_port = control_port
         self.udp_port = udp_port
+        set_allowed_sources(allowed_sources)
         self._stop = threading.Event()
         self._tcp: _ThreadingTCP | None = None
         self._threads: list[threading.Thread] = []
@@ -228,9 +268,10 @@ class NetqualServer:
             self._tcp.shutdown()
 
 
-def run_server(control_port: int, udp_port: int) -> None:
+def run_server(control_port: int, udp_port: int,
+               allowed_sources=None) -> None:
     """フォアグラウンドで受信サーバを起動 (`receiver` サブコマンド用)."""
-    srv = NetqualServer(control_port, udp_port)
+    srv = NetqualServer(control_port, udp_port, allowed_sources)
     srv.start()
     try:
         while not srv._stop.is_set():
@@ -248,8 +289,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="BDP Analyzer 受信側エージェント")
     ap.add_argument("--control-port", type=int, default=5301)
     ap.add_argument("--udp-port", type=int, default=5302)
+    ap.add_argument("--allow", action="append", default=[],
+                    help="許可する送信元 CIDR (複数指定可、未指定なら全許可)。"
+                         "例: --allow 203.0.113.10/32 --allow 198.51.100.0/24")
     args = ap.parse_args()
-    run_server(args.control_port, args.udp_port)
+    run_server(args.control_port, args.udp_port, args.allow)
 
 
 if __name__ == "__main__":

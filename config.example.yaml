@@ -81,6 +81,15 @@ netqual:
   serve: true               # 受信サーバを常駐するか (未指定なら role から自動)
   control_port: 5301        # TCP: 制御 & スループット
   udp_port: 5302            # UDP: ジッタ/RTT/ロス
+
+  # 受信サーバの送信元 IP 制限 (CIDR)。受信ポートは認証を持たないため、
+  # インターネットに公開する受信拠点では必ず設定を推奨 (ルータのフィルタと
+  # 合わせた多層防御)。空リストなら全許可。
+  # 例: 対向拠点の固定 IP のみ許可
+  allowed_sources: []
+  # allowed_sources:
+  #   - "203.0.113.10/32"      # OneWeb 側送信拠点 (固定 IP)
+  #   - "198.51.100.0/24"      # Starlink 側の出口 IP レンジ (変動に注意)
   interval_s: 30            # 測定周期 (targets 側で個別上書き可)
   throughput_seconds: 5     # 1 回の TCP スループット測定時間
   udp_probe_count: 200      # 1 回の UDP プローブ数

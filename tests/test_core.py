@@ -518,3 +518,34 @@ def test_skyplot_visible_and_next():
                        for r in orch.storage.recent_rf(0))
         finally:
             orch.stop()
+
+
+def test_receiver_source_allowlist():
+    """受信サーバの送信元 IP 制限: 許可外は TCP 拒否・UDP 無応答."""
+    from bdp_analyzer.netqual.server import NetqualServer
+    from bdp_analyzer.netqual import client
+
+    srv = NetqualServer(15791, 15792, allowed_sources=["192.0.2.0/24"])
+    srv.start()
+    try:
+        time.sleep(0.3)
+        s = client.measure_once("127.0.0.1", 15791, 15792,
+                                throughput_seconds=0.3, udp_probe_count=5,
+                                udp_probe_interval_ms=5, timeout=2)
+        assert not s[0].throughput_bps          # 許可外 → 測定不成立
+        assert s[0].loss_pct == 100.0
+    finally:
+        srv.stop()
+    time.sleep(0.5)
+
+    srv2 = NetqualServer(15793, 15794, allowed_sources=["127.0.0.1/32"])
+    srv2.start()
+    try:
+        time.sleep(0.3)
+        s2 = client.measure_once("127.0.0.1", 15793, 15794,
+                                 throughput_seconds=0.3, udp_probe_count=5,
+                                 udp_probe_interval_ms=5)
+        assert s2[0].throughput_bps > 0         # 許可内 → 正常測定
+        assert s2[0].rtt_ms is not None
+    finally:
+        srv2.stop()

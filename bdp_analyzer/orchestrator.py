@@ -271,7 +271,9 @@ class Orchestrator:
             if self.netqual_server is None:
                 from .netqual.server import NetqualServer
                 d = self._net_defaults()
-                self.netqual_server = NetqualServer(d["control_port"], d["udp_port"])
+                self.netqual_server = NetqualServer(
+                    d["control_port"], d["udp_port"],
+                    allowed_sources=self.config.netqual.get("allowed_sources"))
                 self.netqual_server.start()
         elif j["kind"] == "rttmon":
             if j["thread"] is None:

@@ -462,6 +462,9 @@ Mini はルータ一体型なので、開通済みの Mini の Wi-Fi（または
 実機のフィールドマッピングや取得可否は **[docs/devices.md](docs/devices.md)** を参照。
 受信側に使う回線の種別(固定/動的/MAP-E/DS-Lite/CGNAT)の調べ方と対処は
 **[docs/network_check.md](docs/network_check.md)**。
+受信拠点ルータ(富士通 Si-R G210 / NURO Biz)のセキュア設定は
+**[docs/router_sir-g210.md](docs/router_sir-g210.md)**
+(あわせて `netqual.allowed_sources` で**アプリ側の送信元 IP 制限**も設定推奨)。
 アーキテクチャ詳細は **[docs/architecture.md](docs/architecture.md)**。
 
 ---
