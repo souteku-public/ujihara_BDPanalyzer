@@ -473,6 +473,7 @@ class Orchestrator:
             "adapters": adapters,
             "global_ip": self._global_ip,
             "profile": dict(self.net_profile),
+            "role": self.config.netqual.get("role", "both"),
         }
 
     def refresh_global_ip(self) -> Optional[str]:
@@ -501,12 +502,19 @@ class Orchestrator:
 
     # ---- 負荷耐性テスト (レートスイープ) --------------------------------------
     def start_load_test(self, target_id: str, direction: str,
-                        rates_bps: List[float], step_seconds: float) -> Optional[str]:
-        """UI からの負荷試験開始。エラー文字列を返す (None なら開始成功)."""
+                        rates_bps: List[float], step_seconds: float,
+                        mode: str = "sweep") -> Optional[str]:
+        """UI からの負荷/耐久試験開始。エラー文字列を返す (None なら開始成功).
+
+        mode="sweep": レート段階スイープ / mode="soak": 一定レートの耐久試験
+        (同一レートをチャンク刻みで流し続け、チャンクごとに記録)
+        """
         if direction not in ("uplink", "downlink"):
             return "direction は uplink / downlink"
-        if not rates_bps or len(rates_bps) > 20:
-            return "レートは 1〜20 段で指定してください"
+        if not rates_bps or len(rates_bps) > 400:
+            return "ステップ数は 1〜400 で指定してください"
+        if len(rates_bps) * step_seconds > 3700:
+            return "合計時間は 1 時間以内にしてください"
         with self._lock:
             if self.load_status.get("running"):
                 return "負荷試験が実行中です"
@@ -519,6 +527,7 @@ class Orchestrator:
                 "running": True, "target": target_id,
                 "session": meta.get("label") or meta.get("host"),
                 "direction": direction, "step": 0, "total": len(rates_bps),
+                "mode": mode, "step_s": step_seconds,
                 "results": [], "error": None, "started_ts": time.time(),
             }
         threading.Thread(target=self._load_test_thread, daemon=True,

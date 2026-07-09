@@ -57,6 +57,24 @@ def _src_allowed(ip: str) -> bool:
     return any(addr in net for net in _ALLOWED_NETS)
 
 
+# ---- アクティビティ記録 (受信拠点ビューでの可視化用) ------------------------
+_ACT_LOCK = threading.Lock()
+_TCP_EVENTS: list = []          # [{ts, ip, cmd}] 直近 30 件
+_UDP_COUNTS = {"echo": 0, "load": 0, "denied": 0}
+
+
+def _note_tcp(ip: str, cmd: str) -> None:
+    with _ACT_LOCK:
+        _TCP_EVENTS.append({"ts": time.time(), "ip": ip, "cmd": cmd})
+        del _TCP_EVENTS[:-30]
+
+
+def get_activity() -> dict:
+    with _ACT_LOCK:
+        return {"tcp_events": list(reversed(_TCP_EVENTS)),
+                "udp_counts": dict(_UDP_COUNTS)}
+
+
 # ---- 負荷試験の共有状態 (UDP ループと制御ハンドラの間で共有) ----------------
 _REG_LOCK = threading.Lock()
 _LOAD_STATS: dict = {}    # src_ip -> {count, bytes, jitter, prev_transit}
@@ -86,6 +104,7 @@ class _ControlHandler(socketserver.StreamRequestHandler):
         peer = self.client_address
         if not _src_allowed(peer[0]):
             log.warning("許可外の送信元からの TCP 接続を拒否: %s", peer[0])
+            _note_tcp(peer[0], "DENIED")
             return
         try:
             while True:
@@ -93,6 +112,7 @@ class _ControlHandler(socketserver.StreamRequestHandler):
                 if not line:
                     break
                 cmd = line.decode("ascii", "replace").strip()
+                _note_tcp(peer[0], cmd.split()[0] if cmd else "?")
                 if cmd == HELLO.decode().strip():
                     self.wfile.write(OK)
                     self.wfile.flush()
@@ -215,8 +235,12 @@ def _udp_echo_loop(port: int, stop: threading.Event) -> None:
         except OSError:
             break
         if not _src_allowed(addr[0]):           # 許可外送信元: 無応答で破棄
+            with _ACT_LOCK:
+                _UDP_COUNTS["denied"] += 1
             continue
         if data.startswith(LOAD_PREFIX):        # 負荷パケット: 集計のみ (echo しない)
+            with _ACT_LOCK:
+                _UDP_COUNTS["load"] += 1
             _note_load_packet(addr[0], data)
         elif data.startswith(PUNCH_PREFIX):     # パンチ: 送信元を登録
             nonce = data[len(PUNCH_PREFIX):].split(b"\x00", 1)[0].decode(
@@ -224,6 +248,8 @@ def _udp_echo_loop(port: int, stop: threading.Event) -> None:
             with _REG_LOCK:
                 _PUNCH[nonce] = addr
         else:                                    # 通常プローブ: そのまま echo
+            with _ACT_LOCK:
+                _UDP_COUNTS["echo"] += 1
             try:
                 sock.sendto(data, addr)
             except OSError:

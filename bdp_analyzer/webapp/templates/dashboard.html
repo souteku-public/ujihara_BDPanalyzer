@@ -59,6 +59,11 @@
     <h1>🛰️ BDP Analyzer — LEO 通信品質モニタ</h1>
     <span id="viewBadge" class="pill" style="display:none;font-size:13px;padding:4px 12px"></span>
     <div class="ctrl">
+      <label>表示モード <select id="mode">
+        <option value="sender">送信（測定）側</option>
+        <option value="receiver">受信側</option>
+        <option value="">すべて</option>
+      </select></label>
       <label>検証対象 <select id="view">
         <option value="">両方</option>
         <option value="starlink">Starlink</option>
@@ -102,7 +107,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card" data-mode="sender">
       <h2>測定設定（時間解像度）</h2>
       <div id="settings"></div>
       <div class="hint">
@@ -138,26 +143,37 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card" data-mode="sender">
       <h2>現在の RF 状態</h2>
       <div class="kpis" id="rfkpi"></div>
     </section>
 
-    <section class="card full">
-      <h2>負荷耐性テスト (レートスイープ)</h2>
+    <section class="card full" data-mode="sender">
+      <h2>負荷・耐久テスト</h2>
       <div class="addform" style="margin-top:0">
+        <select id="ltType" onchange="ltTypeChanged()">
+          <option value="sweep">レートスイープ (段階的に上げる)</option>
+          <option value="soak">耐久 (一定レートを流し続ける)</option>
+        </select>
         <select id="ltTarget" style="min-width:160px"></select>
         <select id="ltDir">
           <option value="uplink">上り (この PC → 相手)</option>
           <option value="downlink">下り (相手 → この PC)</option>
         </select>
-        <input id="ltRates" value="1,2,5,10,20,50" title="送出レート Mbps (カンマ区切り)" style="min-width:160px">
-        <input id="ltStep" value="5" title="各ステップの秒数" style="max-width:70px">
+        <span id="ltSweepFields">
+          <input id="ltRates" value="1,2,5,10,20,50" title="送出レート Mbps (カンマ区切り)" style="min-width:160px">
+          <input id="ltStep" value="5" title="各ステップの秒数" style="max-width:70px">
+        </span>
+        <span id="ltSoakFields" style="display:none">
+          <input id="ltRate" value="30" title="送出レート (Mbps)" style="max-width:80px"> Mbps ×
+          <input id="ltDur" value="30" title="継続時間 (秒、最大3600)" style="max-width:80px"> 秒
+        </span>
         <button onclick="startLoadTest()" id="ltBtn">▶ 開始</button>
       </div>
       <div class="hint" id="ltStatus">
-        送出レート(Mbps)を段階的に上げ、実効レート・ロス・負荷時RTTの変化から回線の耐性(実効容量・飽和挙動)を測ります。
-        <b>実運用トラフィックに影響し、データ量も消費します。</b>実施タイミングに注意。
+        <b>スイープ</b>: レートを段階的に上げ、実効容量と飽和挙動(どこからロスが立つか)を測る ／
+        <b>耐久</b>: 例「30Mbps を 30 秒間」のように一定レートを流し続け、10 秒刻みで実効レート・ロス・RTT の推移を記録。
+        <b>実運用トラフィックに影響し、データ量も消費します</b>(30Mbps×60秒 ≒ 225MB)。
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px">
         <canvas id="chLoad"></canvas>
@@ -201,19 +217,29 @@
       <div id="mkList" class="hint"></div>
     </section>
 
-    <section class="card full">
+    <section class="card full" data-mode="sender">
       <h2>SINR vs スループット</h2>
       <canvas id="chSinrTp"></canvas>
     </section>
 
-    <section class="card">
+    <section class="card" data-mode="sender">
       <h2>SINR vs RTT / ジッタ</h2>
       <canvas id="chSinrRtt"></canvas>
     </section>
 
-    <section class="card">
+    <section class="card" data-mode="sender">
       <h2>パケットロス</h2>
       <canvas id="chLoss"></canvas>
+    </section>
+
+    <section class="card" data-mode="receiver">
+      <h2>受信サーバ状態</h2>
+      <div class="kpis" id="svkpi"></div>
+      <div class="hint" id="svallowed"></div>
+      <table id="svEvents" style="margin-top:8px">
+        <thead><tr><th>時刻</th><th>送信元</th><th>要求</th></tr></thead>
+        <tbody></tbody>
+      </table>
     </section>
 
     <section class="card full">
@@ -242,6 +268,30 @@ function inView(con) {
   const v = $('#view').value;
   return !v || con === v;
 }
+// ---- 表示モード (送信側 / 受信側) ------------------------------------------
+// 共通(衛星・HO予測・天気・理論SINR等)は常に表示し、role 固有カードだけ切替。
+// URL の ?mode= に保持するため、拠点ごとにブックマークして運用できる。
+const MODE_JOB_GROUPS = {
+  sender:   ['rf', 'net', 'rttmon', 'handover', 'weather'],
+  receiver: ['server', 'handover', 'weather'],
+};
+function applyMode() {
+  const mode = $('#mode').value;
+  document.querySelectorAll('main > section').forEach(sec => {
+    const m = sec.dataset.mode || 'common';
+    sec.style.display = (!mode || m === 'common' || m === mode) ? '' : 'none';
+  });
+}
+let modeInited = false;
+function initModeFromRole(role) {
+  if (modeInited) return;
+  modeInited = true;
+  const urlMode = new URLSearchParams(location.search).get('mode');
+  if (urlMode !== null) { $('#mode').value = urlMode; }
+  else if (role === 'receiver') { $('#mode').value = 'receiver'; }
+  applyMode();
+}
+
 function updateViewBadge() {
   const v = $('#view').value;
   const b = $('#viewBadge');
@@ -554,7 +604,10 @@ async function refreshJobs(jobs) {
   if (document.activeElement && $('#jobs').contains(document.activeElement)) return;
   jobs = jobs || await getJSON('/api/jobs');
   let html = '';
+  const mode = $('#mode').value;
+  const allowedGroups = mode ? MODE_JOB_GROUPS[mode] : null;
   for (const [kind, title] of Object.entries(JOB_GROUPS)) {
+    if (allowedGroups && !allowedGroups.includes(kind)) continue;
     const rows = jobs.filter(j=>j.kind===kind);
     if (!rows.length) continue;
     html += `<div class="jobgroup"><div class="gt">${title}</div>` + rows.map(j=>`
@@ -642,6 +695,7 @@ function baseOpts(axes) {
 let profileLoaded = false;
 async function refreshNetinfo() {
   const ni = await getJSON('/api/netinfo');
+  initModeFromRole(ni.role);   // 初回のみ: config の role から表示モードの既定を決定
   const LT = {dhcp_private:'DHCP (プライベートIP)', static_global:'固定グローバルIP',
               cgnat:'CGNAT', unknown:'不明'};
   const adap = (ni.adapters||[]).length
@@ -681,14 +735,29 @@ async function refreshLoadTargets(jobs) {
                   || '<option value="">(測定先なし)</option>';
   if ([...sel.options].some(o=>o.value===cur)) sel.value = cur;
 }
+function ltTypeChanged() {
+  const soak = $('#ltType').value === 'soak';
+  $('#ltSweepFields').style.display = soak ? 'none' : '';
+  $('#ltSoakFields').style.display = soak ? '' : 'none';
+}
+
 async function startLoadTest() {
-  const rates = $('#ltRates').value.split(',').map(s=>parseFloat(s)).filter(v=>v>0);
   if (!$('#ltTarget').value) { alert('測定先を追加してください'); return; }
-  if (!rates.length) { alert('レート (Mbps) をカンマ区切りで入力してください'); return; }
+  const type = $('#ltType').value;
+  let body;
+  if (type === 'soak') {
+    const rate = parseFloat($('#ltRate').value), dur = parseFloat($('#ltDur').value);
+    if (!(rate > 0) || !(dur > 0)) { alert('レートと継続時間を入力してください'); return; }
+    body = {type:'soak', target:$('#ltTarget').value, direction:$('#ltDir').value,
+            rate_mbps:rate, duration_s:dur};
+  } else {
+    const rates = $('#ltRates').value.split(',').map(s=>parseFloat(s)).filter(v=>v>0);
+    if (!rates.length) { alert('レート (Mbps) をカンマ区切りで入力してください'); return; }
+    body = {type:'sweep', target:$('#ltTarget').value, direction:$('#ltDir').value,
+            rates_mbps:rates, step_s:parseFloat($('#ltStep').value)||5};
+  }
   const r = await (await fetch('/api/loadtest', {method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({target:$('#ltTarget').value, direction:$('#ltDir').value,
-                          rates_mbps:rates, step_s:parseFloat($('#ltStep').value)||5})})).json();
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})).json();
   if (!r.ok) { alert('開始できません: '+(r.error||'')); return; }
   $('#ltBtn').disabled = true;
   if (ltTimer) clearInterval(ltTimer);
@@ -705,36 +774,67 @@ async function pollLoadTest() {
 }
 function renderLoadTest(st) {
   const dirJa = st.direction==='downlink' ? '下り' : '上り';
-  $('#ltStatus').innerHTML = st.running
-    ? `⏳ 実行中: ${st.session} ${dirJa} — ステップ ${st.step}/${st.total}`
-    : `✅ 完了: ${st.session} ${dirJa} (${st.total} ステップ)` +
-      (st.error ? ` <span style="color:#ff7a7a">エラー: ${st.error}</span>` : '');
+  const soak = st.mode === 'soak';
   const rs = st.results||[];
-  $('#ltTable tbody').innerHTML = rs.map(r=>`<tr>
-    <td>${(r.offered_bps/1e6).toFixed(1)} Mbps</td>
+  const stepS = st.step_s || 5;
+  const typeJa = soak ? `耐久 ${(rs[0]?.offered_bps/1e6||0).toFixed(0)}Mbps` : 'スイープ';
+  $('#ltStatus').innerHTML = st.running
+    ? `⏳ 実行中 (${typeJa}): ${st.session} ${dirJa} — ${st.step}/${st.total}` +
+      (soak ? ` (${Math.round(st.step*stepS)}/${Math.round(st.total*stepS)}秒)` : '')
+    : `✅ 完了 (${typeJa}): ${st.session} ${dirJa}` +
+      (st.error ? ` <span style="color:#ff7a7a">エラー: ${st.error}</span>` : '');
+  $('#ltTable tbody').innerHTML = rs.map((r,i)=>`<tr>
+    <td>${soak ? Math.round(i*stepS)+'〜'+Math.round((i+1)*stepS)+'秒' : (r.offered_bps/1e6).toFixed(1)+' Mbps'}</td>
     <td>${r.achieved_bps!=null?(r.achieved_bps/1e6).toFixed(1)+' Mbps':'—'}</td>
     <td>${r.loss_pct!=null?r.loss_pct.toFixed(1)+' %':'—'}</td>
     <td>${r.rtt_ms!=null?r.rtt_ms.toFixed(0)+' ms':'—'}</td>
     <td>${r.jitter_ms!=null?r.jitter_ms.toFixed(1)+' ms':'—'}</td></tr>`).join('');
+  $('#ltTable thead th:first-child').textContent = soak ? '経過' : '送出';
+
+  const xOf = (r,i) => soak ? (i+1)*stepS : r.offered_bps/1e6;
   lineChart('#chLoad', { type:'line',
     options:(()=>{ const o = baseOpts(['Mbps','ロス % / RTT ms']);
-      o.scales.x.ticks.callback = v=>v+'M';
-      o.scales.x.title = {display:true,text:'送出レート (Mbps)',color:'#8b98b0'};
+      o.scales.x.ticks.callback = v => soak ? v+'s' : v+'M';
+      o.scales.x.title = {display:true, color:'#8b98b0',
+        text: soak ? '経過時間 (秒)' : '送出レート (Mbps)'};
       return o; })(),
     data:{ datasets:[
       { label:'実効レート (Mbps)', yAxisID:'y',
-        data:rs.map(r=>({x:r.offered_bps/1e6, y:r.achieved_bps!=null?r.achieved_bps/1e6:null})),
+        data:rs.map((r,i)=>({x:xOf(r,i), y:r.achieved_bps!=null?r.achieved_bps/1e6:null})),
         borderColor:'#4da3ff', tension:.2 },
-      { label:'理想 (送出=実効)', yAxisID:'y',
-        data:rs.map(r=>({x:r.offered_bps/1e6, y:r.offered_bps/1e6})),
+      { label: soak ? '送出レート' : '理想 (送出=実効)', yAxisID:'y',
+        data:rs.map((r,i)=>({x:xOf(r,i), y:r.offered_bps/1e6})),
         borderColor:'#2a3550', borderDash:[4,4], pointRadius:0 },
       { label:'ロス (%)', yAxisID:'y1',
-        data:rs.map(r=>({x:r.offered_bps/1e6, y:r.loss_pct})),
+        data:rs.map((r,i)=>({x:xOf(r,i), y:r.loss_pct})),
         borderColor:'#ff7a7a', tension:.2 },
       { label:'負荷時RTT (ms)', yAxisID:'y1',
-        data:rs.map(r=>({x:r.offered_bps/1e6, y:r.rtt_ms})),
+        data:rs.map((r,i)=>({x:xOf(r,i), y:r.rtt_ms})),
         borderColor:'#ffb454', borderDash:[6,4], tension:.2 },
     ]}});
+}
+
+// ---- 受信サーバ状態 (受信側ビュー) -------------------------------------------
+const CMD_JA = { HELLO:'疎通確認', TP_DOWN:'下りスループット', TP_UP:'上りスループット',
+                 LD_UP:'上り負荷', LD_STAT:'負荷集計', LD_DOWN:'下り負荷',
+                 DENIED:'拒否 (許可外)' };
+async function refreshServerStats() {
+  if ($('#mode').value === 'sender') return;   // 送信側ビューでは非表示
+  const s = await getJSON('/api/serverstats');
+  const kpi = [
+    ['状態', s.running ? '稼働中' : '停止', ''],
+    ['TCP', s.control_port ?? '—', ''],
+    ['UDP', s.udp_port ?? '—', ''],
+    ['UDPエコー応答', s.udp_counts?.echo ?? 0, '回'],
+    ['負荷受信', s.udp_counts?.load ?? 0, 'pkt'],
+    ['拒否', (s.udp_counts?.denied ?? 0), 'pkt'],
+  ];
+  $('#svkpi').innerHTML = kpi.map(k=>`<div class="kpi"><div class="v">${k[1]}<span style="font-size:13px;color:var(--muted)"> ${k[2]}</span></div><div class="l">${k[0]}</div></div>`).join('');
+  $('#svallowed').textContent = '許可送信元: ' + (s.allowed||[]).join(', ');
+  $('#svEvents tbody').innerHTML = (s.tcp_events||[]).slice(0,12).map(e=>`
+    <tr${e.cmd==='DENIED'?' style="color:#ff7a7a"':''}>
+      <td>${new Date(e.ts*1000).toLocaleTimeString('ja-JP')}</td>
+      <td>${e.ip}</td><td>${CMD_JA[e.cmd]||e.cmd}</td></tr>`).join('');
 }
 
 async function refresh() {
@@ -754,6 +854,7 @@ async function refresh() {
   refreshModelChart(wx, rfView);
   await refreshMarkers();
   await refreshServing(rfView);
+  await refreshServerStats();
   if (!ltTimer) pollLoadTest();   // 過去の実行結果があれば表示
   $('#updated').textContent = '更新: ' + new Date().toLocaleTimeString('ja-JP');
 }
@@ -770,7 +871,16 @@ $('#view').onchange = () => {
   $('#source').value = '';
   refresh();
 };
+$('#mode').onchange = () => {
+  const m = $('#mode').value;
+  const u = new URL(location);
+  u.searchParams.set('mode', m);       // 空 (すべて) も明示保持
+  history.replaceState(null, '', u);
+  applyMode();
+  refresh();
+};
 $('#view').value = new URLSearchParams(location.search).get('view') || '';
+applyMode();
 refresh();
 setInterval(refresh, 10000);
 </script>

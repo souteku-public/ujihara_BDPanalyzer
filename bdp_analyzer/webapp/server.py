@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import time
 from datetime import datetime
 from typing import Optional
@@ -163,17 +164,41 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
         if orchestrator is None:
             return jsonify({"ok": False, "error": "orchestrator なし"}), 400
         body = request.get_json(force=True, silent=True) or {}
+        mode = body.get("type", "sweep")
         try:
-            rates = [float(m) * 1e6 for m in body.get("rates_mbps", [])]
-            step_s = float(body.get("step_s", 5))
+            if mode == "soak":
+                # 耐久試験: 一定レートをチャンク刻みで流し続ける
+                rate = float(body.get("rate_mbps"))
+                duration = float(body.get("duration_s"))
+                chunk = max(1.0, min(float(body.get("chunk_s", 10)), duration))
+                n = max(1, int(math.ceil(duration / chunk)))
+                rates = [rate * 1e6] * n
+                step_s = chunk
+            else:
+                rates = [float(m) * 1e6 for m in body.get("rates_mbps", [])]
+                step_s = float(body.get("step_s", 5))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "レート/秒数が不正です"}), 400
         err = orchestrator.start_load_test(
             body.get("target", ""), body.get("direction", "uplink"),
-            rates, step_s)
+            rates, step_s, mode=mode)
         if err:
             return jsonify({"ok": False, "error": err}), 400
         return jsonify({"ok": True})
+
+    @app.route("/api/serverstats")
+    def api_serverstats():
+        from ..netqual import server as nsv
+        running = orchestrator is not None and \
+            orchestrator.netqual_server is not None
+        d = orchestrator._net_defaults() if orchestrator else {}
+        return jsonify({
+            "running": running,
+            "control_port": d.get("control_port"),
+            "udp_port": d.get("udp_port"),
+            "allowed": [str(n) for n in nsv._ALLOWED_NETS] or ["(全許可)"],
+            **nsv.get_activity(),
+        })
 
     @app.route("/api/loadtest")
     def api_loadtest_status():

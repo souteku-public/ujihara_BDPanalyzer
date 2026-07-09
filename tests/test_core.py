@@ -549,3 +549,50 @@ def test_receiver_source_allowlist():
         assert s2[0].rtt_ms is not None
     finally:
         srv2.stop()
+
+
+def test_soak_test_and_serverstats():
+    """耐久テスト (一定レート×一定時間) と受信サーバ状態 API."""
+    from bdp_analyzer.config import Config, GroundStation
+    from bdp_analyzer.orchestrator import Orchestrator
+    from bdp_analyzer.webapp.server import create_app
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(
+            raw={}, ground_station=GroundStation(),
+            db_path=os.path.join(d, "t.sqlite"), collectors=[],
+            netqual={"enabled": True, "role": "both",
+                     "control_port": 15811, "udp_port": 15812,
+                     "interval_s": 600,
+                     "targets": [{"label": "lo", "host": "127.0.0.1",
+                                  "enabled": False}]},
+            handover={"enabled": False}, webapp={})
+        orch = Orchestrator(cfg)
+        orch.start()
+        try:
+            c = create_app(orch.storage, orch).test_client()
+            r = c.post("/api/loadtest", json={
+                "type": "soak", "target": "net:lo", "direction": "uplink",
+                "rate_mbps": 3, "duration_s": 2, "chunk_s": 1})
+            assert r.get_json()["ok"]
+            for _ in range(30):
+                st = c.get("/api/loadtest").get_json()
+                if not st["running"]:
+                    break
+                time.sleep(0.5)
+            assert st["error"] is None and st["mode"] == "soak"
+            assert len(st["results"]) == 2      # 2 秒 / 1 秒チャンク
+            assert all(abs(x["offered_bps"] - 3e6) < 1 for x in st["results"])
+            assert all(x["achieved_bps"] > 2e6 for x in st["results"])
+
+            # 合計 1 時間超は拒否
+            r = c.post("/api/loadtest", json={
+                "type": "soak", "target": "net:lo", "direction": "uplink",
+                "rate_mbps": 3, "duration_s": 7200})
+            assert not r.get_json()["ok"]
+
+            s = c.get("/api/serverstats").get_json()
+            assert s["running"] and s["control_port"] == 15811
+            assert s["udp_counts"]["load"] > 0
+        finally:
+            orch.stop()
