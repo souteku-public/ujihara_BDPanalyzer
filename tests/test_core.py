@@ -596,3 +596,57 @@ def test_soak_test_and_serverstats():
             assert s["udp_counts"]["load"] > 0
         finally:
             orch.stop()
+
+
+def test_iperf_like_features():
+    """iperf 相当機能: 並列ストリーム合算・omit・順序逆転の記録."""
+    from bdp_analyzer.netqual import client
+    from bdp_analyzer.netqual.server import NetqualServer
+
+    # 並列合算ロジック (実回線の帯域制限を模擬したユニット検証)
+    assert client._parallel_bps(lambda *a: 25e6, 1) == 25e6
+    n = {"c": 0}
+
+    def stub(*a):
+        n["c"] += 1
+        return 25e6
+    assert client._parallel_bps(stub, 4) == 100e6 and n["c"] == 4
+    # 失敗ストリーム (None) は除外して合算
+    seq = iter([10e6, None, 10e6, None])
+    assert client._parallel_bps(lambda *a: next(seq), 4) == 20e6
+
+    # ループバック統合: streams メタ・omit 完走・out_of_order 記録
+    srv = NetqualServer(15831, 15832)
+    srv.start()
+    try:
+        time.sleep(0.3)
+        s = client.measure_once("127.0.0.1", 15831, 15832,
+                                throughput_seconds=2, udp_probe_count=20,
+                                udp_probe_interval_ms=5, streams=4,
+                                omit_seconds=1)
+        assert s[0].streams == 4 and s[1].streams == 4
+        assert s[0].throughput_bps > 0 and s[1].throughput_bps > 0
+        assert s[0].out_of_order_pct is not None   # ループバックは通常 0
+    finally:
+        srv.stop()
+
+
+def test_net_samples_migration_adds_columns():
+    """既存 (旧スキーマ) DB に out_of_order_pct / streams 列が追加される."""
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "old.sqlite")
+        con = sqlite3.connect(path)
+        # 直前リリースの net_samples スキーマ (out_of_order_pct / streams が無い)
+        con.execute("CREATE TABLE net_samples (id INTEGER PRIMARY KEY "
+                    "AUTOINCREMENT, ts REAL NOT NULL, session TEXT, "
+                    "direction TEXT, throughput_bps REAL, rtt_ms REAL, "
+                    "rtt_min_ms REAL, rtt_max_ms REAL, jitter_ms REAL, "
+                    "loss_pct REAL, owd_ms REAL)")
+        con.commit()
+        con.close()
+        st = Storage(path)                          # マイグレーションが走る
+        st.add_net(NetSample(ts=time.time(), session="x", direction="downlink",
+                             out_of_order_pct=1.5, streams=4))
+        row = st.recent_net(0)[0]
+        assert row["out_of_order_pct"] == 1.5 and row["streams"] == 4

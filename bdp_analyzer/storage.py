@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS net_samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL, session TEXT, direction TEXT,
     throughput_bps REAL, rtt_ms REAL, rtt_min_ms REAL, rtt_max_ms REAL,
-    jitter_ms REAL, loss_pct REAL, owd_ms REAL
+    jitter_ms REAL, loss_pct REAL, out_of_order_pct REAL, owd_ms REAL,
+    streams INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_net_ts ON net_samples(ts);
 
@@ -63,12 +64,27 @@ CREATE INDEX IF NOT EXISTS idx_ho_ts ON handover_events(ts);
 """
 
 
+# 後方互換マイグレーション: 既存 DB に不足カラムを追加 (table -> {col: type})
+_MIGRATIONS = {
+    "net_samples": {"out_of_order_pct": "REAL", "streams": "INTEGER"},
+}
+
+
 class Storage:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._lock = threading.Lock()
         with self._connect() as con:
             con.executescript(_SCHEMA)
+            self._migrate(con)
+
+    def _migrate(self, con: sqlite3.Connection) -> None:
+        for table, cols in _MIGRATIONS.items():
+            existing = {r["name"] for r in
+                        con.execute(f"PRAGMA table_info({table})").fetchall()}
+            for col, coltype in cols.items():
+                if col not in existing:
+                    con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.db_path, timeout=10)

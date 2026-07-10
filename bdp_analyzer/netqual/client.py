@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import threading
 import time
 from typing import List, Optional
 
@@ -31,19 +32,28 @@ def _src(bind_ip: Optional[str]):
 
 
 def _tcp_downlink_bps(host: str, port: int, seconds: float, timeout: float,
-                      bind_ip: Optional[str] = None) -> Optional[float]:
+                      bind_ip: Optional[str] = None,
+                      omit: float = 0.0) -> Optional[float]:
+    """下り 1 ストリーム。omit 秒 (TCP スロースタート) を除外して実効レート算出."""
     try:
         with socket.create_connection((host, port), timeout=timeout,
                                       source_address=_src(bind_ip)) as s:
             s.sendall(f"TP_DOWN {seconds}\n".encode())
             s.settimeout(seconds + timeout)
             total, start = 0, time.monotonic()
+            omit_bytes, omit_t = None, None
             while True:
                 data = s.recv(CHUNK)
                 if not data:
                     break
                 total += len(data)
-            elapsed = time.monotonic() - start
+                if omit_bytes is None and time.monotonic() - start >= omit:
+                    omit_bytes, omit_t = total, time.monotonic()
+            end = time.monotonic()
+        if omit_bytes is not None and omit_t is not None:
+            win = end - omit_t                       # 除外後の計測窓
+            return ((total - omit_bytes) * 8) / win if win > 0 else None
+        elapsed = end - start
         return (total * 8) / elapsed if elapsed > 0 else None
     except (OSError, socket.timeout) as e:
         log.warning("downlink 計測失敗: %s", e)
@@ -51,7 +61,9 @@ def _tcp_downlink_bps(host: str, port: int, seconds: float, timeout: float,
 
 
 def _tcp_uplink_bps(host: str, port: int, seconds: float, timeout: float,
-                    bind_ip: Optional[str] = None) -> Optional[float]:
+                    bind_ip: Optional[str] = None,
+                    omit: float = 0.0) -> Optional[float]:
+    """上り 1 ストリーム。omit 秒を除外した送出量から実効レートを算出."""
     try:
         with socket.create_connection((host, port), timeout=timeout,
                                       source_address=_src(bind_ip)) as s:
@@ -59,31 +71,57 @@ def _tcp_uplink_bps(host: str, port: int, seconds: float, timeout: float,
             deadline = time.monotonic() + seconds
             start = time.monotonic()
             sent = 0
+            omit_bytes, omit_t = None, None
             while time.monotonic() < deadline:
                 s.sendall(_UP_PAYLOAD)
                 sent += len(_UP_PAYLOAD)
+                if omit_bytes is None and time.monotonic() - start >= omit:
+                    omit_bytes, omit_t = sent, time.monotonic()
             s.sendall(_END)
-            elapsed = time.monotonic() - start
+            end = time.monotonic()
             s.settimeout(timeout)
-            # server が受信バイト数を返す (信頼できる実効値)
             resp = s.recv(64).decode("ascii", "replace").strip()
+        # server の受信バイト数を全体の実効値の基準にしつつ、omit 窓の割合で按分
         acked = sent
         if resp.startswith("BYTES"):
             try:
                 acked = int(resp.split()[1])
             except (ValueError, IndexError):
                 pass
+        if omit_bytes is not None and omit_t is not None and sent > 0:
+            win = end - omit_t
+            acked_win = acked * (sent - omit_bytes) / sent   # 送出比で按分
+            return (acked_win * 8) / win if win > 0 else None
+        elapsed = end - start
         return (acked * 8) / elapsed if elapsed > 0 else None
     except (OSError, socket.timeout) as e:
         log.warning("uplink 計測失敗: %s", e)
         return None
 
 
+def _parallel_bps(fn, streams: int, *args) -> Optional[float]:
+    """fn を streams 本並列実行し、各ストリームの実効レートを合算 (iperf -P 相当)."""
+    if streams <= 1:
+        return fn(*args)
+    results: List[Optional[float]] = [None] * streams
+    threads = []
+    for i in range(streams):
+        t = threading.Thread(
+            target=lambda idx: results.__setitem__(idx, fn(*args)),
+            args=(i,), daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join()
+    vals = [v for v in results if v]
+    return sum(vals) if vals else None
+
+
 def _udp_stats(host: str, port: int, count: int, interval_ms: float,
                timeout: float, bind_ip: Optional[str] = None) -> dict:
     """UDP エコーで RTT / jitter / loss を測る."""
     result = {"rtt_ms": None, "rtt_min_ms": None, "rtt_max_ms": None,
-              "jitter_ms": None, "loss_pct": None}
+              "jitter_ms": None, "loss_pct": None, "out_of_order_pct": None}
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(timeout)
@@ -96,6 +134,8 @@ def _udp_stats(host: str, port: int, count: int, interval_ms: float,
 
     rtts: List[float] = []
     received = 0
+    max_seq_seen = -1     # 順序逆転 (out-of-order) 検出用: 到着済み最大 seq
+    out_of_order = 0
     interval = interval_ms / 1000.0
     try:
         for seq in range(count):
@@ -118,18 +158,25 @@ def _udp_stats(host: str, port: int, count: int, interval_ms: float,
                 except OSError:
                     break
                 try:
-                    _rseq, t0 = decode_probe(data)
+                    rseq, t0 = decode_probe(data)
                 except (ValueError, UnicodeDecodeError):
                     continue
                 rtt_ms = (time.time_ns() - t0) / 1e6
                 if rtt_ms >= 0:
                     rtts.append(rtt_ms)
                     received += 1
+                    # 到着順が seq の昇順から外れたら順序逆転としてカウント
+                    if rseq < max_seq_seen:
+                        out_of_order += 1
+                    else:
+                        max_seq_seen = rseq
     finally:
         s.close()
 
     if count > 0:
         result["loss_pct"] = round((count - received) / count * 100.0, 3)
+    if received > 0:
+        result["out_of_order_pct"] = round(out_of_order / received * 100.0, 3)
     if rtts:
         result["rtt_ms"] = round(sum(rtts) / len(rtts), 3)
         result["rtt_min_ms"] = round(min(rtts), 3)
@@ -147,20 +194,28 @@ def measure_once(host: str, control_port: int, udp_port: int, *,
                  throughput_seconds: float = 5, udp_probe_count: int = 200,
                  udp_probe_interval_ms: float = 20, timeout: float = 8,
                  session: Optional[str] = None,
-                 bind_ip: Optional[str] = None) -> List[NetSample]:
+                 bind_ip: Optional[str] = None,
+                 streams: int = 1, omit_seconds: float = 0.0) -> List[NetSample]:
     """1 サイクル測定し、downlink/uplink の NetSample を返す.
 
     bind_ip を指定すると全ソケットの送信元をそのアダプタ IP に固定する
     (マルチ NIC で回線ごとに測定を分ける用途)。
+    streams>1 で並列 TCP ストリームの合算スループット (iperf -P 相当)、
+    omit_seconds でスループット計測から先頭の TCP スロースタート分を除外する。
     """
     session = session or host
-    down = _tcp_downlink_bps(host, control_port, throughput_seconds, timeout, bind_ip)
-    up = _tcp_uplink_bps(host, control_port, throughput_seconds, timeout, bind_ip)
+    streams = max(1, int(streams))
+    down = _parallel_bps(_tcp_downlink_bps, streams,
+                         host, control_port, throughput_seconds, timeout,
+                         bind_ip, omit_seconds)
+    up = _parallel_bps(_tcp_uplink_bps, streams,
+                       host, control_port, throughput_seconds, timeout,
+                       bind_ip, omit_seconds)
     udp = _udp_stats(host, udp_port, udp_probe_count, udp_probe_interval_ms,
                      timeout, bind_ip)
     now = time.time()
 
-    common = dict(session=session, **udp)
+    common = dict(session=session, streams=streams, **udp)
     return [
         NetSample(ts=now, direction="downlink", throughput_bps=down, **common),
         NetSample(ts=now, direction="uplink", throughput_bps=up, **common),

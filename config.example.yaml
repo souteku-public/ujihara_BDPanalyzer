@@ -94,6 +94,9 @@ netqual:
   throughput_seconds: 5     # 1 回の TCP スループット測定時間
   udp_probe_count: 200      # 1 回の UDP プローブ数
   udp_probe_interval_ms: 20 # UDP プローブ送出間隔
+  throughput_streams: 1     # 並列 TCP ストリーム数 (iperf -P 相当)。
+                            # 衛星は高 BDP のため 4〜8 で実効容量に近づく
+  throughput_omit_seconds: 0 # スロースタート除外秒 (iperf --omit 相当)。高 RTT なら 1〜2
 
   # 測定先は複数登録でき、ラベル別にグラフ表示される。
   # Web UI (計測コントロール) からも追加/削除/ON・OFF できるので、

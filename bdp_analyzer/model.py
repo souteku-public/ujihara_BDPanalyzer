@@ -65,7 +65,9 @@ class NetSample:
     rtt_max_ms: Optional[float] = None
     jitter_ms: Optional[float] = None        # RFC3550 相当
     loss_pct: Optional[float] = None         # 0.0-100.0
+    out_of_order_pct: Optional[float] = None # 順序逆転パケット率 0.0-100.0
     owd_ms: Optional[float] = None           # 片道遅延 (時刻同期時のみ有効)
+    streams: Optional[int] = None            # スループット測定の並列ストリーム数
 
     def as_row(self) -> Dict[str, Any]:
         return asdict(self)

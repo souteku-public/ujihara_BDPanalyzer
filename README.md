@@ -19,7 +19,7 @@ Starlink Mini・OneWeb(Kymeta / Intellian)の**電波(RF)側メトリクス**と
 | Kymeta の WebGUI から IP 指定で情報記録 | **Kymeta コレクタ**（HTTPS WebGUI をスクレイプ, `config` で IP と項目マッピング） |
 | Starlink mini の電波監視ソリューション | **Starlink コレクタ**（Dish の gRPC からボアサイト方位/仰角・SNR系・障害物・遅延を取得） |
 | OneWeb Intellian の電波監視ソリューション | **Intellian コレクタ**（LUI スクレイプ / SNMP。取れない項目は TLE 予測で補完） |
-| スループット・ジッタ・RTT の測定 | **netqual**（送信/受信 2 台構成の自己完結測定） |
+| スループット・ジッタ・RTT の測定 | **netqual**（送信/受信 2 台構成の自己完結測定。**並列ストリーム / スロースタート除外 / 順序逆転**など iperf 相当項目を網羅） |
 | SINR との対比 | ダッシュボードの「SINR vs スループット / RTT・ジッタ」対比グラフ + `/api/correlation` |
 | 両衛星の状況表示 & ハンドオーバー予測 | **handover**（CelesTrak TLE + SGP4 で可視衛星とハンドオーバー時刻を予測） |
 | 送受 2 台での測定 | **送受兼用の 1 ソフト**（`role: both`）で双方向測定。役割分離（`sender`/`receiver`）も可 |

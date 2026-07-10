@@ -32,10 +32,12 @@ net = pd.read_sql("SELECT * FROM net_samples", con, parse_dates={"ts": "s"})
 | ts | REAL | epoch 秒 (UTC) | 測定時刻 |
 | session | TEXT | — | 測定先ラベル（例: `Starlink経由` / `社内有線LAN` / `Wi-Fi`）。**回線の区別はこの列だけ** |
 | direction | TEXT | `downlink` / `uplink` / `rtt` | 測定方向。`rtt` は**常時 RTT モニタ**（1 秒集計の往復測定、throughput は NULL） |
-| throughput_bps | REAL | bps | TCP スループット |
+| throughput_bps | REAL | bps | TCP スループット（streams 本の合算） |
+| streams | INTEGER | 本 | スループット測定の並列ストリーム数（iperf -P 相当） |
 | rtt_ms / rtt_min_ms / rtt_max_ms | REAL | ms | UDP エコーの往復遅延（平均/最小/最大） |
 | jitter_ms | REAL | ms | RFC3550 相当の平滑化ジッタ |
 | loss_pct | REAL | %(0-100) | UDP プローブのロス率 |
+| out_of_order_pct | REAL | %(0-100) | 順序逆転（到着順が seq 昇順から外れた）パケット率 |
 | owd_ms | REAL | ms | 片道遅延（時刻同期時のみ。現状は NULL） |
 
 ### rf_samples — 電波側メトリクス（機器種別によらず共通）

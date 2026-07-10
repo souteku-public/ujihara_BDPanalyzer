@@ -94,6 +94,15 @@ SETTINGS_SPEC = {
         "label": "常時 RTT モニタ: 集計窓 (記録解像度)",
         "hint": "1 秒 = 最高解像度。長期監視でデータ量を抑えたい場合は 5〜10 秒。"
                 "変更は該当モニタを OFF→ON した時に反映"},
+    "throughput_streams": {
+        "default": 1, "min": 1, "max": 32, "unit": "本",
+        "label": "スループット並列ストリーム数 (iperf -P 相当)",
+        "hint": "衛星は高 BDP のため単一 TCP では回線を埋めきれないことが多い。"
+                "4〜8 本にすると実効容量に近づく (回線の実力を測るなら推奨)"},
+    "throughput_omit_seconds": {
+        "default": 0, "min": 0, "max": 10, "unit": "秒",
+        "label": "スロースタート除外時間 (iperf --omit 相当)",
+        "hint": "TCP 立ち上がり分を平均から除外。高 RTT の衛星では 1〜2 秒推奨"},
 }
 
 
@@ -159,6 +168,8 @@ class Orchestrator:
             "udp_probe_interval_ms": float(nq.get("udp_probe_interval_ms", 20)),
             "rtt_probe_interval_ms": 200.0,
             "rtt_agg_seconds": 1.0,
+            "throughput_streams": int(nq.get("throughput_streams", 1)),
+            "throughput_omit_seconds": float(nq.get("throughput_omit_seconds", 0)),
         }
         for k, v in self.tuning.items():     # UI での上書きを反映 (次回測定から有効)
             if k in d:
@@ -178,6 +189,8 @@ class Orchestrator:
                                                    d["udp_probe_interval_ms"])),
             session=target.get("label") or target["host"],
             bind_ip=target.get("bind_ip"),
+            streams=int(target.get("streams", d["throughput_streams"])),
+            omit_seconds=d["throughput_omit_seconds"],
         )
         for s in samples:
             self.storage.add_net(s)

@@ -411,8 +411,13 @@ async function refreshCharts(rf) {
   ]}});
 
   lineChart('#chLoss', { type:'line', options:baseOpts(['%']), data:{ datasets:
-    shown.map(s => ({ label:`${s} Loss`, yAxisID:'y', data:pts(rttRows(s), n=>n.loss_pct),
-                      borderColor:sessionColor(s), tension:.2, pointRadius:0, borderWidth:1.5 })),
+    shown.flatMap(s => [
+      { label:`${s} Loss`, yAxisID:'y', data:pts(rttRows(s), n=>n.loss_pct),
+        borderColor:sessionColor(s), tension:.2, pointRadius:0, borderWidth:1.5 },
+      { label:`${s} 順序逆転`, yAxisID:'y',
+        data:pts(bySes('downlink')(s), n=>n.out_of_order_pct),
+        borderColor:sessionColor(s), borderDash:[2,3], tension:.2, pointRadius:0, borderWidth:1.5 },
+    ]),
   }});
 }
 

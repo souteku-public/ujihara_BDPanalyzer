@@ -58,11 +58,13 @@ def cmd_sender(args) -> None:
     from .netqual.client import measure_once
     while True:
         samples = measure_once(args.host, args.control_port, args.udp_port,
-                               throughput_seconds=args.seconds)
+                               throughput_seconds=args.seconds,
+                               streams=args.streams, omit_seconds=args.omit)
         for s in samples:
             tp = f"{s.throughput_bps/1e6:.2f}Mbps" if s.throughput_bps else "n/a"
             print(f"{time.strftime('%H:%M:%S')} [{s.direction}] {tp} "
-                  f"rtt={s.rtt_ms}ms jitter={s.jitter_ms}ms loss={s.loss_pct}%")
+                  f"(x{s.streams}) rtt={s.rtt_ms}ms jitter={s.jitter_ms}ms "
+                  f"loss={s.loss_pct}% ooo={s.out_of_order_pct}%")
         if not args.loop:
             break
         time.sleep(args.interval)
@@ -107,6 +109,10 @@ def main() -> None:
     s.add_argument("--control-port", type=int, default=5301)
     s.add_argument("--udp-port", type=int, default=5302)
     s.add_argument("--seconds", type=float, default=5)
+    s.add_argument("--streams", type=int, default=1,
+                   help="並列 TCP ストリーム数 (iperf -P 相当)")
+    s.add_argument("--omit", type=float, default=0.0,
+                   help="スロースタート除外秒 (iperf --omit 相当)")
     s.add_argument("--loop", action="store_true")
     s.add_argument("--interval", type=float, default=30)
     s.set_defaults(func=cmd_sender)
