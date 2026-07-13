@@ -50,6 +50,11 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
     def index():
         return render_template("dashboard.html")
 
+    @app.route("/viewer")
+    def viewer():
+        # CSV 可視化ビューア (単体でも動く自己完結ページ)
+        return render_template("csv_viewer.html")
+
     @app.route("/api/sources")
     def api_sources():
         return jsonify(storage.sources())

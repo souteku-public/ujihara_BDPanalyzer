@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BDP Analyzer — CSV ビューア</title>
+<style>
+  :root{--bg:#0f1420;--card:#1a2233;--card2:#212b42;--line:#2a3550;--div:#232c40;
+    --fg:#e6ebf5;--muted:#8b98b0;--accent:#4da3ff;--good:#6de3a1;--warn:#ffb454;
+    --crit:#ff7a7a;--oneweb:#c58bff;--cyan:#5ce1e6;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:system-ui,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif;
+    font-variant-numeric:tabular-nums;}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px;}
+  h1{font-size:19px;margin:0 0 4px;}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 16px;line-height:1.6;}
+  #drop{border:2px dashed var(--line);border-radius:14px;padding:34px;text-align:center;
+    color:var(--muted);cursor:pointer;transition:.15s;background:#131a29;}
+  #drop.hot{border-color:var(--accent);color:var(--fg);background:#16203200;}
+  #drop b{color:var(--accent);}
+  .card{background:var(--card);border-radius:12px;padding:16px;margin-top:16px;}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:700;letter-spacing:.05em;}
+  .kpis{display:flex;gap:22px;flex-wrap:wrap;}
+  .kpi .v{font-size:22px;font-weight:700;}
+  .kpi .v small{font-size:12px;color:var(--muted);font-weight:600;}
+  .kpi .l{font-size:11px;color:var(--muted);}
+  .pill{font-size:12px;padding:3px 12px;border-radius:20px;background:#243352;color:var(--accent);font-weight:600;}
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--div);white-space:nowrap;}
+  th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--card);}
+  .scroll{overflow-x:auto;}
+  .dict td:first-child{color:var(--accent);font-family:ui-monospace,monospace;}
+  canvas{width:100%;height:200px;display:block;}
+  .lgd{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:8px;}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:middle;margin-right:4px;}
+  .dash{display:inline-block;width:15px;border-top:2px dashed currentColor;vertical-align:middle;margin-right:4px;}
+  .chartblk{margin-bottom:18px;}
+  .chartblk h3{font-size:12px;color:var(--fg);margin:0 0 6px;font-weight:600;}
+  .err{color:var(--crit);}
+  .muted{color:var(--muted);}
+  a{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📊 BDP Analyzer — CSV ビューア</h1>
+  <p class="sub">ダッシュボードで書き出した CSV（RF / 通信品質 / 負荷試験 / ハンドオーバー / 天気 / マーカー）を
+    読み込むと、種類を自動判定してグラフ化します。<b>このページ単体で動作</b>するので、アプリを起動していなくても
+    CSV ファイルをここに放り込めば確認できます（サーバへ送信されません・ブラウザ内で処理）。</p>
+
+  <div id="drop">
+    <div style="font-size:15px;margin-bottom:6px">ここに CSV を<b>ドラッグ&ドロップ</b>、またはクリックして選択</div>
+    <div style="font-size:12px">bdp_rf_*.csv / bdp_net_*.csv / bdp_load_*.csv / bdp_weather_*.csv / bdp_handover_*.csv / bdp_markers_*.csv</div>
+    <input type="file" id="file" accept=".csv" hidden>
+  </div>
+
+  <div id="out"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const COL = {starlink:'#4da3ff', oneweb:'#c58bff', accent:'#4da3ff', good:'#6de3a1',
+             warn:'#ffb454', crit:'#ff7a7a', cyan:'#5ce1e6', muted:'#8b98b0'};
+const PALETTE = ['#4da3ff','#6de3a1','#c58bff','#ffb454','#5ce1e6','#ff7a7a','#7aa2f7'];
+
+// ---- データ辞書 (何が保存されているか) -------------------------------------
+const DICT = {
+  net: [['ts','測定時刻 (epoch秒 UTC)'],['time_iso','測定時刻 (ISO ローカル)'],
+    ['session','測定先ラベル (回線の区別)'],['direction','downlink/uplink/rtt'],
+    ['throughput_bps','スループット [bps] (streams 本合算)'],['streams','並列ストリーム数'],
+    ['rtt_ms','往復遅延 平均 [ms]'],['rtt_min_ms','RTT 最小 [ms]'],['rtt_max_ms','RTT 最大 [ms]'],
+    ['jitter_ms','ジッタ (RFC3550相当) [ms]'],['loss_pct','パケットロス率 [%]'],
+    ['out_of_order_pct','順序逆転率 [%]'],['owd_ms','片道遅延 [ms] (時刻同期時のみ)']],
+  rf: [['ts','取得時刻 (epoch秒 UTC)'],['time_iso','取得時刻 (ISO)'],
+    ['source','コレクタ名 (:1s=1秒履歴, model:*=理論値)'],['kind','starlink/kymeta/intellian/model'],
+    ['sinr_db','SINR/SNR [dB]'],['snr_above_noise','SNRノイズフロア以上 0/1'],['rssi_dbm','受信強度 [dBm]'],
+    ['azimuth_deg','方位角 [°]'],['elevation_deg','仰角 [°]'],['tilt_deg','チルト角 [°]'],
+    ['tx_freq_mhz','送信周波数 [MHz]'],['rx_freq_mhz','受信周波数 [MHz]'],
+    ['beam_id','ビームID'],['satellite_id','接続衛星'],
+    ['down_bps','端末申告 下り [bps]'],['up_bps','端末申告 上り [bps]'],
+    ['latency_ms','端末の対PoP遅延 [ms]'],['drop_rate','対PoPドロップ率 0-1'],
+    ['obstruction_pct','障害物(遮蔽)率 [%]'],['state','端末状態']],
+  load: [['ts','ステップ完了時刻'],['time_iso','時刻 (ISO)'],['session','測定先ラベル'],
+    ['direction','uplink/downlink'],['offered_bps','送出(オファー)レート [bps]'],
+    ['achieved_bps','実効レート [bps]'],['loss_pct','ロス率 [%]'],['jitter_ms','ジッタ [ms]'],
+    ['rtt_ms','負荷時RTT [ms]']],
+  weather: [['ts','取得時刻'],['time_iso','時刻 (ISO)'],['precip_mmh','降水強度 [mm/h]'],
+    ['rain_mmh','雨のみ [mm/h]'],['cloud_cover_pct','雲量 [%]'],['temp_c','気温 [℃]'],
+    ['humidity_pct','湿度 [%]'],['weather_code','WMO天気コード'],['wind_speed_ms','風速 [m/s]'],
+    ['rain_atten_ku45_db','雨減衰 参考値 (Ku,45°) [dB]']],
+  handover: [['ts','予測/発生時刻'],['time_iso','時刻 (ISO)'],['constellation','starlink/oneweb'],
+    ['from_sat','切替元衛星'],['to_sat','切替先衛星'],['reason','切替理由'],
+    ['from_elevation_deg','切替元 仰角 [°]'],['to_elevation_deg','切替先 仰角 [°]'],
+    ['lead_time_s','予測先読み時間 [秒]']],
+  markers: [['ts','記録時刻'],['time_iso','時刻 (ISO)'],['text','内容 (実験メモ)']],
+};
+const TYPE_JA = {net:'通信品質',rf:'電波(RF)',load:'負荷/耐久試験',weather:'気象',
+                 handover:'ハンドオーバー',markers:'実験マーカー'};
+
+// ---- CSV パーサ (BOM / クオート / 改行対応) ---------------------------------
+function parseCSV(text){
+  text = text.replace(/^﻿/, '');
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i];
+    if (q){
+      if (c === '"'){ if (text[i+1] === '"'){ cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ','){ row.push(cur); cur = ''; }
+    else if (c === '\n'){ row.push(cur); rows.push(row); row = []; cur = ''; }
+    else if (c === '\r'){ /* skip */ }
+    else cur += c;
+  }
+  if (cur.length || row.length){ row.push(cur); rows.push(row); }
+  const header = rows.shift() || [];
+  const objs = rows.filter(r => r.length > 1).map(r => {
+    const o = {}; header.forEach((h,i)=> o[h] = r[i]); return o; });
+  return {header, objs};
+}
+const num = v => { const f = parseFloat(v); return isFinite(f) ? f : null; };
+
+function detectType(header){
+  const h = new Set(header);
+  if (h.has('offered_bps')) return 'load';
+  if (h.has('precip_mmh')) return 'weather';
+  if (h.has('constellation')) return 'handover';
+  if (h.has('direction') && h.has('throughput_bps')) return 'net';
+  if (h.has('kind') && h.has('sinr_db')) return 'rf';
+  if (h.has('text')) return 'markers';
+  return null;
+}
+
+// ---- Canvas 折れ線チャート (時系列 / 数値X、二軸対応) -----------------------
+function drawChart(cv, datasets, opts={}){
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W*dpr; cv.height = H*dpr;
+  const g = cv.getContext('2d'); g.scale(dpr,dpr);
+  g.clearRect(0,0,W,H);
+  const padL=48, padR=(opts.yr?48:12), padT=8, padB=22;
+  const all = datasets.flatMap(d=>d.points);
+  if (!all.length){ g.fillStyle=COL.muted; g.fillText('データなし',10,20); return; }
+  const xs = all.map(p=>p.x);
+  let xMin=Math.min(...xs), xMax=Math.max(...xs); if(xMin===xMax) xMax=xMin+1;
+  function rng(axis){ const v=datasets.filter(d=>(d.axis||'l')===axis).flatMap(d=>d.points.map(p=>p.y)).filter(y=>y!=null);
+    if(!v.length) return [0,1]; let a=Math.min(...v,0), b=Math.max(...v); if(a===b)b=a+1; return [a,b*1.08]; }
+  const L=rng('l'), R=rng('r');
+  const X=x=>padL+(x-xMin)/(xMax-xMin)*(W-padL-padR);
+  const Y=(y,ax)=>{const [a,b]=ax==='r'?R:L; return H-padB-(y-a)/(b-a)*(H-padT-padB);};
+  // grid + y ticks (左)
+  g.strokeStyle='#232c40'; g.fillStyle=COL.muted; g.font='10px system-ui'; g.lineWidth=1;
+  for(let i=0;i<=4;i++){ const yy=padT+(H-padT-padB)*i/4; g.beginPath(); g.moveTo(padL,yy); g.lineTo(W-padR,yy); g.stroke();
+    const val=L[1]-(L[1]-L[0])*i/4; g.textAlign='right'; g.fillText(fmtNum(val),padL-4,yy+3); }
+  if(opts.yr){ g.fillStyle=COL.warn; for(let i=0;i<=4;i++){ const yy=padT+(H-padT-padB)*i/4;
+    const val=R[1]-(R[1]-R[0])*i/4; g.textAlign='left'; g.fillText(fmtNum(val),W-padR+4,yy+3);} g.fillStyle=COL.muted; }
+  // x ticks (時刻 or 数値)
+  g.textAlign='center';
+  for(let i=0;i<=4;i++){ const xv=xMin+(xMax-xMin)*i/4; const xx=X(xv);
+    g.fillText(opts.timeX?fmtTime(xv):fmtNum(xv)+(opts.xUnit||''), xx, H-6); }
+  // series
+  datasets.forEach(d=>{
+    g.strokeStyle=d.color; g.lineWidth=1.6; g.setLineDash(d.dash||[]);
+    if(d.fill){ g.beginPath(); let started=false;
+      d.points.forEach(p=>{ if(p.y==null){started=false;return;} const X2=X(p.x),Y2=Y(p.y,d.axis);
+        if(!started){g.moveTo(X2,H-padB);g.lineTo(X2,Y2);started=true;}else g.lineTo(X2,Y2);});
+      const last=d.points[d.points.length-1]; if(last&&last.y!=null)g.lineTo(X(last.x),H-padB);
+      g.closePath(); g.globalAlpha=.12; g.fillStyle=d.color; g.fill(); g.globalAlpha=1; }
+    g.beginPath(); let started=false;
+    d.points.forEach(p=>{ if(p.y==null){started=false;return;} const X2=X(p.x),Y2=Y(p.y,d.axis);
+      if(!started){g.moveTo(X2,Y2);started=true;}else g.lineTo(X2,Y2);});
+    g.stroke(); g.setLineDash([]);
+  });
+}
+function fmtNum(v){ const a=Math.abs(v);
+  if(a>=1e9)return(v/1e9).toFixed(1)+'G'; if(a>=1e6)return(v/1e6).toFixed(1)+'M';
+  if(a>=1e3)return(v/1e3).toFixed(1)+'k'; if(a>=10||a===0)return v.toFixed(0); return v.toFixed(1); }
+function fmtTime(ms){ const d=new Date(ms); return String(d.getHours()).padStart(2,'0')+':'+
+  String(d.getMinutes()).padStart(2,'0'); }
+const tOf = r => (r.ts ? parseFloat(r.ts)*1000 : Date.parse(r.time_iso));
+
+function chartBlock(title, datasets, opts){
+  const id='c'+Math.random().toString(36).slice(2);
+  const lgd = datasets.filter(d=>d.points.some(p=>p.y!=null)).map(d=>
+    `<span><span class="${d.dash?'dash':'dot'}" style="${d.dash?'color':'background'}:${d.color}"></span>${d.label}</span>`).join('');
+  setTimeout(()=>drawChart(document.getElementById(id), datasets, opts), 0);
+  return `<div class="chartblk"><h3>${title}</h3><canvas id="${id}"></canvas><div class="lgd">${lgd}</div></div>`;
+}
+
+// ---- 種類別のグラフ構成 -----------------------------------------------------
+function seriesBy(objs, keyFn, xFn, yFn){
+  const groups={}; objs.forEach(o=>{ const k=keyFn(o); if(k==null)return;
+    (groups[k]=groups[k]||[]).push({x:xFn(o), y:yFn(o)}); });
+  return groups;
+}
+let colorIdx={}; function colorFor(k){ if(!(k in colorIdx)) colorIdx[k]=Object.keys(colorIdx).length;
+  return PALETTE[colorIdx[k]%PALETTE.length]; }
+
+function buildCharts(type, objs){
+  colorIdx={};
+  const T=opts=>Object.assign({timeX:true},opts);
+  let html='';
+  if(type==='net'){
+    const sess=[...new Set(objs.map(o=>o.session))];
+    const dirRows=(s,dir)=>objs.filter(o=>o.session===s&&o.direction===dir);
+    const rttRows=s=>{const r=dirRows(s,'rtt');return r.length?r:dirRows(s,'downlink');};
+    html+=chartBlock('スループット (Mbps)', sess.flatMap(s=>[
+      {label:`${s} Down`,color:colorFor(s),points:dirRows(s,'downlink').map(o=>({x:tOf(o),y:num(o.throughput_bps)/1e6}))},
+      {label:`${s} Up`,color:colorFor(s),dash:[6,4],points:dirRows(s,'uplink').map(o=>({x:tOf(o),y:num(o.throughput_bps)/1e6}))},
+    ]), T());
+    html+=chartBlock('RTT / ジッタ (ms)', sess.flatMap(s=>[
+      {label:`${s} RTT`,color:colorFor(s),points:rttRows(s).map(o=>({x:tOf(o),y:num(o.rtt_ms)}))},
+      {label:`${s} Jitter`,color:colorFor(s),dash:[6,4],points:rttRows(s).map(o=>({x:tOf(o),y:num(o.jitter_ms)}))},
+    ]), T());
+    html+=chartBlock('ロス / 順序逆転 (%)', sess.flatMap(s=>[
+      {label:`${s} Loss`,color:colorFor(s),points:rttRows(s).map(o=>({x:tOf(o),y:num(o.loss_pct)}))},
+      {label:`${s} 順序逆転`,color:colorFor(s),dash:[2,3],points:dirRows(s,'downlink').map(o=>({x:tOf(o),y:num(o.out_of_order_pct)}))},
+    ]), T());
+  } else if(type==='rf'){
+    const src=[...new Set(objs.map(o=>o.source))];
+    html+=chartBlock('SINR (dB) 実測=実線 / 理論(model:*)=破線', src.map(s=>(
+      {label:s,color:colorFor(s),dash:s.startsWith('model:')?[8,4]:null,
+       points:objs.filter(o=>o.source===s).map(o=>({x:tOf(o),y:num(o.sinr_db)}))})), T());
+    html+=chartBlock('アンテナの向き (方位/仰角 °)', src.flatMap(s=>[
+      {label:`${s} 方位`,color:colorFor(s),points:objs.filter(o=>o.source===s).map(o=>({x:tOf(o),y:num(o.azimuth_deg)}))},
+      {label:`${s} 仰角`,color:colorFor(s),dash:[6,4],points:objs.filter(o=>o.source===s).map(o=>({x:tOf(o),y:num(o.elevation_deg)}))},
+    ]), T());
+    html+=chartBlock('障害物 % (左) / 端末遅延 ms (右)', [
+      {label:'障害物 %',color:COL.crit,axis:'l',points:objs.map(o=>({x:tOf(o),y:num(o.obstruction_pct)}))},
+      {label:'端末遅延 ms',color:COL.warn,axis:'r',points:objs.map(o=>({x:tOf(o),y:num(o.latency_ms)}))},
+    ], T({yr:true}));
+  } else if(type==='load'){
+    const varied = new Set(objs.map(o=>o.offered_bps)).size>1;
+    const xf = varied ? (o=>num(o.offered_bps)/1e6) : ((o,i)=>i);
+    const pts=(yf)=>objs.map((o,i)=>({x:varied?num(o.offered_bps)/1e6:i, y:yf(o)}));
+    html+=chartBlock('実効レート vs 送出レート (Mbps)', [
+      {label:'実効',color:COL.accent,points:pts(o=>num(o.achieved_bps)/1e6)},
+      {label:'送出',color:COL.muted,dash:[4,4],points:pts(o=>num(o.offered_bps)/1e6)},
+    ], {timeX:false, xUnit:varied?'M':''});
+    html+=chartBlock('ロス % (左) / 負荷時RTT ms (右)', [
+      {label:'ロス %',color:COL.crit,axis:'l',points:pts(o=>num(o.loss_pct))},
+      {label:'負荷時RTT ms',color:COL.warn,axis:'r',dash:[6,4],points:pts(o=>num(o.rtt_ms))},
+    ], {timeX:false, yr:true, xUnit:varied?'M':''});
+    html+=`<p class="muted" style="font-size:12px">${varied?'レートスイープ (X=送出レート)':'耐久試験 (X=ステップ番号)'}</p>`;
+  } else if(type==='weather'){
+    html+=chartBlock('降水強度 mm/h (左) / 雨減衰 dB (右)', [
+      {label:'降水 mm/h',color:COL.cyan,axis:'l',fill:true,points:objs.map(o=>({x:tOf(o),y:num(o.precip_mmh)}))},
+      {label:'雨減衰 dB',color:COL.warn,axis:'r',points:objs.map(o=>({x:tOf(o),y:num(o.rain_atten_ku45_db)}))},
+    ], T({yr:true}));
+    html+=chartBlock('雲量/湿度 % (左) / 気温 ℃ (右)', [
+      {label:'雲量 %',color:COL.accent,axis:'l',points:objs.map(o=>({x:tOf(o),y:num(o.cloud_cover_pct)}))},
+      {label:'湿度 %',color:COL.oneweb,axis:'l',dash:[6,4],points:objs.map(o=>({x:tOf(o),y:num(o.humidity_pct)}))},
+      {label:'気温 ℃',color:COL.crit,axis:'r',points:objs.map(o=>({x:tOf(o),y:num(o.temp_c)}))},
+    ], T({yr:true}));
+  } else if(type==='handover'){
+    html+=`<div class="scroll"><table><thead><tr><th>時刻</th><th>系</th><th>from → to</th><th>理由</th><th>仰角</th></tr></thead><tbody>`+
+      objs.slice(-60).reverse().map(o=>`<tr><td>${o.time_iso||o.ts}</td><td>${o.constellation}</td>
+        <td>${o.from_sat||'—'} → ${o.to_sat||'—'}</td><td>${o.reason}</td>
+        <td>${o.from_elevation_deg??'—'} → ${o.to_elevation_deg??'—'}</td></tr>`).join('')+`</tbody></table></div>`;
+  } else if(type==='markers'){
+    html+=objs.slice().reverse().map(o=>`<div style="padding:6px 0;border-bottom:1px solid var(--div)">📌 <b>${o.time_iso||o.ts}</b> — ${o.text}</div>`).join('');
+  }
+  return html;
+}
+
+// ---- 画面組み立て -----------------------------------------------------------
+function render(name, text){
+  const out=$('#out');
+  const {header, objs} = parseCSV(text);
+  const type = detectType(header);
+  if(!type){ out.innerHTML=`<div class="card err">この CSV の種類を判定できませんでした。BDP Analyzer が書き出した CSV を読み込んでください。<br>ヘッダ: ${header.join(', ')}</div>`; return; }
+  const times = objs.map(tOf).filter(t=>isFinite(t));
+  const span = times.length ? `${new Date(Math.min(...times)).toLocaleString('ja-JP')} 〜 ${new Date(Math.max(...times)).toLocaleString('ja-JP')}` : '—';
+  const dict = (DICT[type]||[]).filter(([c])=>header.includes(c));
+
+  let html=`<div class="card"><h2>読み込み結果</h2><div class="kpis">
+    <div class="kpi"><div class="v"><span class="pill">${TYPE_JA[type]}</span></div><div class="l">CSV 種別</div></div>
+    <div class="kpi"><div class="v">${objs.length.toLocaleString()}<small> 行</small></div><div class="l">レコード数</div></div>
+    <div class="kpi"><div class="v">${header.length}<small> 列</small></div><div class="l">項目数</div></div>
+    </div><p class="muted" style="font-size:12px;margin:10px 0 0">ファイル: ${name} ／ 期間: ${span}</p></div>`;
+
+  html+=`<div class="card"><h2>グラフ</h2>${buildCharts(type, objs)}</div>`;
+
+  html+=`<div class="card"><h2>この CSV に含まれるデータ（データ辞書）</h2><div class="scroll"><table class="dict">
+    <thead><tr><th>列名</th><th>意味・単位</th></tr></thead><tbody>${
+    dict.map(([c,d])=>`<tr><td>${c}</td><td>${d}</td></tr>`).join('')}</tbody></table></div></div>`;
+
+  const preview = objs.slice(0,50);
+  html+=`<div class="card"><h2>生データ プレビュー（先頭 ${preview.length} 行 / 全 ${objs.length} 行）</h2>
+    <div class="scroll"><table><thead><tr>${header.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${
+    preview.map(o=>`<tr>${header.map(h=>`<td>${o[h]??''}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+
+  out.innerHTML=html;
+}
+
+// ---- ファイル入力 -----------------------------------------------------------
+const drop=$('#drop'), fileInput=$('#file');
+drop.onclick=()=>fileInput.click();
+fileInput.onchange=e=>{ const f=e.target.files[0]; if(f) load(f); };
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+drop.addEventListener('drop',e=>{ const f=e.dataTransfer.files[0]; if(f) load(f); });
+function load(f){ const r=new FileReader(); r.onload=()=>{ try{ render(f.name, r.result); }
+  catch(err){ $('#out').innerHTML=`<div class="card err">読み込みエラー: ${err.message}</div>`; } };
+  r.readAsText(f); }
+window.addEventListener('resize',()=>{ /* 再描画は再読込時のみ (簡易) */ });
+</script>
+</body>
+</html>
