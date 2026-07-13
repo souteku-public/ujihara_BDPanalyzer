@@ -1,0 +1,313 @@
+<style>
+  /* 実アプリ (dark 運用ダッシュボード) の配色に忠実に合わせた単一テーマのモックアップ */
+  :root{
+    --bg:#0f1420; --card:#1a2233; --card2:#212b42; --line:#2a3550; --div:#232c40;
+    --fg:#e6ebf5; --muted:#8b98b0; --accent:#4da3ff;
+    --starlink:#4da3ff; --oneweb:#c58bff;
+    --good:#6de3a1; --warn:#ffb454; --crit:#ff7a7a; --cyan:#5ce1e6;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:system-ui,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif;
+    font-variant-numeric:tabular-nums;}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px;}
+
+  /* 説明ヘッダ (モックアップである旨) */
+  .intro{padding:16px 18px;border:1px solid var(--line);border-radius:12px;
+    background:linear-gradient(180deg,#151d2e,#131a29);margin-bottom:18px;}
+  .intro h1{font-size:18px;margin:0 0 6px;}
+  .intro p{margin:0;color:var(--muted);font-size:13px;line-height:1.6;}
+  .modeswitch{display:inline-flex;gap:4px;margin-top:12px;background:#0c1119;
+    border:1px solid var(--line);border-radius:10px;padding:4px;}
+  .modeswitch button{background:none;border:none;color:var(--muted);font:inherit;
+    font-size:13px;padding:8px 18px;border-radius:7px;cursor:pointer;font-weight:600;}
+  .modeswitch button.on{background:var(--accent);color:#0b1220;}
+
+  /* アプリのヘッダ帯 */
+  header.app{background:var(--card);border-radius:12px 12px 0 0;padding:12px 16px;
+    display:flex;gap:14px;align-items:center;flex-wrap:wrap;border-bottom:2px solid #0c1119;}
+  header.app .logo{font-size:15px;font-weight:700;}
+  .badge{font-size:12px;padding:4px 12px;border-radius:20px;font-weight:600;}
+  .badge.sl{background:#243352;color:var(--starlink);}
+  header.app .ctrl{margin-left:auto;display:flex;gap:8px;align-items:center;
+    font-size:12px;color:var(--muted);flex-wrap:wrap;}
+  .sel{background:#0c1119;border:1px solid var(--line);border-radius:6px;
+    padding:5px 9px;color:var(--fg);font-size:12px;}
+  .sel.hot{border-color:var(--accent);color:var(--accent);}
+
+  main{background:#0c101a;border-radius:0 0 12px 12px;padding:16px;
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;}
+  .card{background:var(--card);border-radius:12px;padding:14px;}
+  .card.full{grid-column:1/-1;}
+  .card h2{font-size:12px;margin:0 0 12px;color:var(--muted);font-weight:700;
+    letter-spacing:.05em;}
+  .tag{font-size:10px;font-weight:700;letter-spacing:.04em;padding:2px 7px;border-radius:5px;
+    margin-left:8px;vertical-align:middle;}
+  .tag.s{background:#1d2c1f;color:var(--good);}      /* 送信側専用 */
+  .tag.r{background:#2b2440;color:var(--oneweb);}    /* 受信側専用 */
+  .tag.c{background:#1c2740;color:var(--accent);}    /* 共通 */
+
+  /* KPI */
+  .kpis{display:flex;gap:16px;flex-wrap:wrap;}
+  .kpi .v{font-size:24px;font-weight:700;line-height:1.1;}
+  .kpi .v small{font-size:12px;color:var(--muted);font-weight:600;}
+  .kpi .l{font-size:11px;color:var(--muted);margin-top:2px;}
+
+  /* トグル行 (計測コントロール) */
+  .grp{font-size:11px;color:var(--muted);margin:8px 0 4px;}
+  .row{display:flex;align-items:center;gap:9px;padding:5px 6px;border-radius:7px;}
+  .row:hover{background:var(--card2);}
+  .row .lbl{flex:1;font-size:13px;}
+  .row .det{font-size:11px;color:var(--muted);}
+  .sw{width:34px;height:18px;border-radius:20px;flex:none;position:relative;background:var(--line);}
+  .sw.on{background:var(--accent);}
+  .sw::after{content:"";position:absolute;width:12px;height:12px;border-radius:50%;
+    top:3px;left:3px;background:#8b98b0;transition:.15s;}
+  .sw.on::after{left:19px;background:#fff;}
+  .num{background:#0c1119;border:1px solid var(--line);border-radius:5px;color:var(--fg);
+    font:inherit;font-size:12px;width:52px;padding:3px 5px;}
+
+  /* テーブル */
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  th,td{text-align:left;padding:5px 7px;border-bottom:1px solid var(--div);}
+  th{color:var(--muted);font-weight:600;}
+  tr.future td{color:var(--accent);}
+  td.crit,.crit{color:var(--crit);}
+  .hint{color:var(--muted);font-size:11px;line-height:1.6;margin-top:8px;}
+  .field{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted);}
+  .field .box{background:#0c1119;border:1px solid var(--line);border-radius:5px;padding:5px 8px;color:var(--fg);}
+  .btn{background:var(--accent);color:#0b1220;border:none;border-radius:6px;padding:6px 13px;
+    font:inherit;font-weight:700;font-size:12px;}
+  .btn.ghost{background:var(--card2);color:var(--fg);}
+  svg{display:block;width:100%;}
+  .lgd{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:6px;}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:middle;margin-right:3px;}
+  .dash{display:inline-block;width:14px;border-top:2px dashed currentColor;vertical-align:middle;margin-right:3px;}
+</style>
+
+<div class="wrap">
+  <div class="intro">
+    <h1>BDP Analyzer — UIイメージ（送信側 / 受信側）</h1>
+    <p>実アプリのダッシュボード配色・レイアウトに合わせた画面イメージです。上のタブで役割を切り替えると、
+       表示されるカードが変わります。<b>衛星の状況・スカイプロット・天気・SINR実測vs理論・ハンドオーバー予測は送受共通</b>、
+       それ以外は役割ごとに整理されます。数値はサンプルです。</p>
+    <div class="modeswitch">
+      <button id="btnSender" class="on" onclick="setMode('sender')">送信（測定）側 PC</button>
+      <button id="btnReceiver" onclick="setMode('receiver')">受信側 PC</button>
+    </div>
+  </div>
+
+  <header class="app">
+    <span class="logo">🛰️ BDP Analyzer</span>
+    <span class="badge sl">Starlink 検証中</span>
+    <div class="ctrl">
+      <span>表示モード <span id="modeSel" class="sel hot">送信（測定）側</span></span>
+      <span>検証対象 <span class="sel">Starlink</span></span>
+      <span>期間 <span class="sel">30分</span></span>
+      <span style="border-left:1px solid var(--line);padding-left:8px">CSV: RF / 通信品質 / 負荷 / HO</span>
+    </div>
+  </header>
+
+  <main id="board"></main>
+</div>
+
+<script>
+// ---- サンプルデータ ---------------------------------------------------------
+const rand = seed => { let x = Math.sin(seed) * 10000; return x - Math.floor(x); };
+function series(n, base, amp, seed){ return Array.from({length:n}, (_,i)=>
+  base + Math.sin(i/3+seed)*amp*0.5 + (rand(i+seed)-0.5)*amp); }
+
+// 折れ線チャート (複数系列)。series: [{color, dash, data[0..1]}]
+function lineChart(sets, {h=70, yLabelL, yLabelR, xLabel}={}){
+  const W=300, H=h, pad=4;
+  const grid = [0.25,0.5,0.75].map(g=>`<line x1="0" y1="${(H-2*pad)*g+pad}" x2="${W}" y2="${(H-2*pad)*g+pad}" stroke="var(--div)" stroke-width="0.5"/>`).join('');
+  const paths = sets.map(s=>{
+    const d = s.data.map((v,i)=>`${i/(s.data.length-1)*W},${H-pad-v*(H-2*pad)}`).join(' L ');
+    const area = s.fill ? `<path d="M 0,${H} L ${d} L ${W},${H} Z" fill="${s.color}" opacity="0.12"/>` : '';
+    return `${area}<polyline points="${d}" fill="none" stroke="${s.color}" stroke-width="1.6"
+      ${s.dash?`stroke-dasharray="${s.dash}"`:''} stroke-linejoin="round"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:${h}px">${grid}${paths}</svg>`;
+}
+function legend(items){ return `<div class="lgd">${items.map(i=>
+  `<span><span class="${i.dash?'dash':'dot'}" style="${i.dash?'color':'background'}:${i.color}"></span>${i.t}</span>`).join('')}</div>`; }
+
+// スカイプロット (SVG 極座標)
+function skyplot(){
+  const cx=90,cy=90,R=72;
+  const xy=(az,el)=>{const r=R*(90-el)/90,a=az*Math.PI/180;return [cx+r*Math.sin(a),cy-r*Math.cos(a)];};
+  const rings=[0,30,60].map(el=>`<circle cx="${cx}" cy="${cy}" r="${R*(90-el)/90}" fill="none" stroke="var(--line)" stroke-width="0.7"/>`).join('');
+  const spokes=[0,45,90,135].map(a=>{const [x,y]=xy(a,0),[x2,y2]=xy(a+180,0);return `<line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="var(--div)" stroke-width="0.5"/>`;}).join('');
+  const sats=[[140,62],[200,48],[35,71],[300,40],[95,33],[255,55],[10,28],[170,80],[220,25],[60,44]];
+  const dots=sats.map((s,i)=>{const [x,y]=xy(s[0],s[1]);return `<circle cx="${x}" cy="${y}" r="3" fill="var(--starlink)" opacity="0.85"/>`;}).join('');
+  const [sx,sy]=xy(95,33);   // 接続中
+  const [nx,ny]=xy(140,62);  // 次切替先
+  const [ax,ay]=xy(92,35);   // アンテナ向き
+  return `<svg viewBox="0 0 180 180" style="height:200px;max-width:200px;margin:0 auto">
+    ${rings}${spokes}${dots}
+    <line x1="${sx}" y1="${sy}" x2="${nx}" y2="${ny}" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="4 3"/>
+    <circle cx="${sx}" cy="${sy}" r="5" fill="var(--starlink)"/><circle cx="${sx}" cy="${sy}" r="8.5" fill="none" stroke="#fff" stroke-width="1.6"/>
+    <circle cx="${nx}" cy="${ny}" r="4" fill="var(--starlink)"/><circle cx="${nx}" cy="${ny}" r="8.5" fill="none" stroke="var(--warn)" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <path d="M ${ax-6},${ay} h12 M ${ax},${ay-6} v12" stroke="var(--good)" stroke-width="1.8"/>
+    <text x="${cx}" y="12" fill="var(--fg)" font-size="10" text-anchor="middle" font-weight="700">N</text>
+    <text x="${cx}" y="178" fill="var(--muted)" font-size="9" text-anchor="middle">S</text>
+    <text x="176" y="93" fill="var(--muted)" font-size="9">E</text>
+    <text x="2" y="93" fill="var(--muted)" font-size="9">W</text>
+  </svg>`;
+}
+
+// ---- カード定義 -------------------------------------------------------------
+function kpi(v,u,l){return `<div class="kpi"><div class="v">${v}<small> ${u}</small></div><div class="l">${l}</div></div>`;}
+function swrow(on,lbl,det,extra=''){return `<div class="row"><span class="sw ${on?'on':''}"></span><span class="lbl">${lbl}</span><span class="det">${det}</span>${extra}</div>`;}
+
+const C = {}; // カード HTML 生成関数
+
+C.control_sender = ()=>`<div class="card"><h2>計測コントロール<span class="tag c">共通</span></h2>
+  <div class="grp">電波 (RF) コレクタ</div>
+  ${swrow(true,'starlink-mini-1','starlink',' <input class="num" value="5"> 秒')}
+  ${swrow(false,'kymeta-oneweb-1','kymeta')}
+  <div class="grp">通信品質 測定先</div>
+  ${swrow(true,'固定IP拠点','→ 203.0.113.10',' <input class="num" value="30"> 秒')}
+  ${swrow(false,'社内LAN','→ 192.168.1.20')}
+  <div class="grp">常時 RTT モニタ / 予測 / 天気</div>
+  ${swrow(true,'固定IP拠点 RTT','1秒解像度')}
+  ${swrow(true,'ハンドオーバー予測','TLE+SGP4')}
+  ${swrow(true,'気象 (雨雲) モニタ','Open-Meteo')}
+  <div class="field" style="margin-top:10px"><span class="box" style="flex:1">ラベル</span><span class="box" style="flex:1">相手IP</span><span class="btn">＋ 測定先追加</span></div>`;
+
+C.control_receiver = ()=>`<div class="card"><h2>計測コントロール<span class="tag c">共通</span></h2>
+  <div class="grp">受信サーバ</div>
+  ${swrow(true,'受信サーバ(応答側)','TCP:5301 / UDP:5302')}
+  <div class="grp">予測 / 天気 (共通)</div>
+  ${swrow(true,'ハンドオーバー予測','TLE+SGP4')}
+  ${swrow(true,'気象 (雨雲) モニタ','Open-Meteo')}
+  <p class="hint">受信側は「応答」に徹するため、RF コレクタや測定先の能動測定は表示されません。</p>`;
+
+C.netinfo = (role)=>`<div class="card"><h2>ネットワーク情報<span class="tag c">共通</span></h2>
+  <p class="hint" style="margin-top:0">ホスト名: <b>${role==='sender'?'sender-pc':'rx-fixed'}</b> ／
+    ローカルIP: <b>${role==='sender'?'192.168.0.30':'192.168.1.10'}</b> ／
+    グローバルIP: <b>${role==='sender'?'(動的) 198.51.100.72':'203.0.113.10'}</b> ／
+    回線種別: <b>${role==='sender'?'DHCP動的グローバル':'固定グローバルIP'}</b></p>
+  <div class="field"><span class="box" style="flex:1">${role==='sender'?'固定グローバルIP':'DHCP動的グローバル'}</span>
+    <span class="box" style="flex:1">対向: ${role==='sender'?'203.0.113.10':'198.51.100.72'}</span>
+    <span class="btn ghost">保存</span><span class="btn ghost">グローバルIP取得</span></div>`;
+
+C.rfstate = ()=>`<div class="card"><h2>現在の RF 状態<span class="tag s">送信側</span></h2>
+  <div class="kpis">
+    ${kpi('—','dB','SINR (Starlink非公開)')}${kpi('268','°','方位角')}${kpi('71','°','仰角')}
+    ${kpi('—','MHz','TX周波数')}${kpi('1.4','%','障害物')}${kpi('29','ms','端末遅延')}</div>
+  <p class="hint">Starlink は数値SINR非公開のため SNR良否・スループット・遅延で評価（Kymetaは数値SINRあり）。</p>`;
+
+C.loadtest = ()=>`<div class="card full"><h2>負荷・耐久テスト<span class="tag s">送信側</span></h2>
+  <div class="field"><span class="box">耐久 (一定レート)</span><span class="box">固定IP拠点</span>
+    <span class="box">上り</span><span class="box">30</span>Mbps ×<span class="box">30</span>秒<span class="btn">▶ 開始</span></div>
+  <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:14px;margin-top:10px">
+    <div>${lineChart([
+      {color:'var(--starlink)',data:series(24,0.72,0.10,3)},
+      {color:'var(--line)',dash:'3 3',data:Array(24).fill(0.78)},
+      {color:'var(--crit)',data:series(24,0.12,0.06,9)},
+      {color:'var(--warn)',dash:'5 3',data:series(24,0.4,0.14,5)}],{h:90,xLabel:'経過'})}
+      ${legend([{color:'var(--starlink)',t:'実効 28.4Mbps'},{color:'var(--line)',t:'送出 30Mbps',dash:1},{color:'var(--crit)',t:'ロス 1.2%'},{color:'var(--warn)',t:'負荷時RTT 58ms',dash:1}])}</div>
+    <div style="overflow:auto"><table><thead><tr><th>経過</th><th>実効</th><th>ロス</th><th>RTT</th></tr></thead><tbody>
+      <tr><td>0〜10秒</td><td>28.9</td><td>0.4%</td><td>44ms</td></tr>
+      <tr><td>10〜20秒</td><td>28.1</td><td>1.1%</td><td>61ms</td></tr>
+      <tr class="future"><td>20〜30秒</td><td>27.7</td><td>2.0%</td><td>72ms</td></tr></tbody></table></div>
+  </div>
+  <p class="hint">「30Mbpsを30秒間」など一定レートを流し続け、10秒刻みで実効/ロス/RTTの推移を記録。レートスイープ（段階的に上げる）も選択可。</p>`;
+
+C.sinr_tp = ()=>`<div class="card full"><h2>SINR vs スループット<span class="tag s">送信側</span></h2>
+  ${lineChart([
+    {color:'var(--starlink)',data:series(40,0.55,0.25,1)},
+    {color:'var(--good)',data:series(40,0.35,0.2,7)},
+    {color:'var(--warn)',data:series(40,0.6,0.15,2)}],{h:80})}
+  ${legend([{color:'var(--starlink)',t:'Down 187Mbps'},{color:'var(--good)',t:'Up 22Mbps'},{color:'var(--warn)',t:'SINR (右軸)'}])}`;
+
+C.sinr_rtt = ()=>`<div class="card"><h2>SINR vs RTT / ジッタ<span class="tag s">送信側</span></h2>
+  ${lineChart([
+    {color:'var(--crit)',data:series(40,0.4,0.22,4)},
+    {color:'var(--oneweb)',dash:'6 3',data:series(40,0.2,0.12,8)},
+    {color:'var(--warn)',data:series(40,0.6,0.15,2)}],{h:80})}
+  ${legend([{color:'var(--crit)',t:'RTT 41ms'},{color:'var(--oneweb)',t:'Jitter 3.2ms',dash:1},{color:'var(--warn)',t:'SINR (右軸)'}])}`;
+
+C.loss = ()=>`<div class="card"><h2>パケットロス<span class="tag s">送信側</span></h2>
+  ${lineChart([
+    {color:'var(--crit)',fill:true,data:series(40,0.18,0.14,6)},
+    {color:'var(--starlink)',dash:'2 3',data:series(40,0.08,0.08,11)}],{h:80})}
+  ${legend([{color:'var(--crit)',t:'Loss 0.8%'},{color:'var(--starlink)',t:'順序逆転 0.2%',dash:1}])}`;
+
+C.serverstate = ()=>`<div class="card"><h2>受信サーバ状態<span class="tag r">受信側</span></h2>
+  <div class="kpis">
+    ${kpi('稼働中','','状態')}${kpi('5301','','TCP')}${kpi('5302','','UDP')}
+    ${kpi('1,284','回','UDPエコー応答')}${kpi('939','pkt','負荷受信')}${kpi('3','pkt','拒否')}</div>
+  <p class="hint">許可送信元: 198.51.100.72/32</p>
+  <table><thead><tr><th>時刻</th><th>送信元</th><th>要求</th></tr></thead><tbody>
+    <tr><td>14:22:07</td><td>198.51.100.72</td><td>下りスループット</td></tr>
+    <tr><td>14:22:02</td><td>198.51.100.72</td><td>上り負荷</td></tr>
+    <tr><td>14:21:55</td><td>198.51.100.72</td><td>疎通確認</td></tr>
+    <tr class="crit"><td>14:20:11</td><td>45.9.148.x</td><td>拒否 (許可外)</td></tr></tbody></table>`;
+
+C.serving = ()=>`<div class="card"><h2>接続中の衛星 / 次のハンドオーバー<span class="tag c">共通</span></h2>
+  <div class="row" style="border-bottom:1px solid var(--div)"><div><b style="color:var(--starlink)">Starlink</b>
+    <span class="badge sl" style="font-size:10px">可視 60機</span><br>
+    <span class="det">サービス衛星: STARLINK-31524 (仰角71°, 方位268°)</span></div>
+    <div style="text-align:right;font-size:11px;color:var(--muted)">次HO<br><b style="color:var(--warn)">47秒後 → 32926</b></div></div>
+  <div class="row"><div><b style="color:var(--oneweb)">OneWeb</b>
+    <span class="badge" style="background:#2b2440;color:var(--oneweb);font-size:10px">可視 9機</span><br>
+    <span class="det">サービス衛星: ONEWEB-0631 (仰角72°, 方位200°)</span></div>
+    <div style="text-align:right;font-size:11px;color:var(--muted)">次HO<br><b style="color:var(--warn)">2分18秒後 → 0417</b></div></div>`;
+
+C.sky = ()=>`<div class="card"><h2>上空の衛星（スカイプロット）<span class="tag c">共通</span></h2>
+  ${skyplot()}
+  <p class="hint">●可視 ◉<span style="color:#fff">白</span>=接続中 ◎<span style="color:var(--warn)">橙点線</span>=次切替先＋矢印 ＋<span style="color:var(--good)">緑</span>=アンテナ向き。中心=天頂/外周=地平線/上=北</p>`;
+
+C.weather = ()=>`<div class="card"><h2>上空の天気（理論SINRに反映）<span class="tag c">共通</span></h2>
+  <div class="kpis">
+    ${kpi('4.2','mm/h','降水強度')}${kpi('1.9','dB','雨減衰(Ku,45°)')}${kpi('88','%','雲量')}
+    ${kpi('22.9','℃','気温')}${kpi('83','%','湿度')}</div>
+  <p class="hint">天気: 雨 ／ 降水強度は理論SINRの降雨減衰として自動反映（ITU-R P.838）</p>`;
+
+C.sinr_model = ()=>`<div class="card full"><h2>SINR 実測 vs 理論値（干渉評価）<span class="tag c">共通</span></h2>
+  ${lineChart([
+    {color:'var(--starlink)',data:series(40,0.55,0.18,1)},
+    {color:'var(--starlink)',dash:'8 4',data:series(40,0.68,0.05,1)},
+    {color:'var(--oneweb)',data:series(40,0.42,0.15,5)},
+    {color:'var(--oneweb)',dash:'8 4',data:series(40,0.5,0.05,5)},
+    {color:'var(--cyan)',fill:true,data:series(40,0.15,0.1,6)}],{h:90})}
+  ${legend([{color:'var(--starlink)',t:'実測 Kymeta'},{color:'var(--starlink)',t:'理論 starlink',dash:1},{color:'var(--oneweb)',t:'実測 OneWeb'},{color:'var(--oneweb)',t:'理論 oneweb',dash:1},{color:'var(--cyan)',t:'降水 mm/h(右軸)'}])}
+  <p class="hint">Δ(実測−理論)が干渉・降雨・遮蔽の劣化推定量。<b>starlink</b>: 実測 14.2 − 理論 18.7 = <b style="color:var(--warn)">Δ −4.5 dB</b>（降水と無相関→干渉起因の疑い）</p>`;
+
+C.ho_timeline = ()=>`<div class="card full"><h2>ハンドオーバー予測タイムライン<span class="tag c">共通</span></h2>
+  <table><thead><tr><th>時刻</th><th>状態</th><th>系</th><th>from → to</th><th>理由</th><th>仰角</th></tr></thead><tbody>
+    <tr class="future"><td>14:23:00</td><td>予測</td><td>starlink</td><td>31524 → 32926</td><td>elevation_mask</td><td>26 → 74</td></tr>
+    <tr class="future"><td>14:24:32</td><td>予測</td><td>oneweb</td><td>0631 → 0417</td><td>better_candidate</td><td>41 → 68</td></tr>
+    <tr><td>14:21:48</td><td>記録</td><td>starlink</td><td>30988 → 31524</td><td>elevation_mask</td><td>25 → 70</td></tr></tbody></table>`;
+
+C.settings = ()=>`<div class="card"><h2>測定設定（時間解像度）<span class="tag s">送信側</span></h2>
+  <div class="row"><span class="lbl">スループット並列ストリーム</span><input class="num" value="4"> 本</div>
+  <div class="row"><span class="lbl">スロースタート除外</span><input class="num" value="1"> 秒</div>
+  <div class="row"><span class="lbl">UDPプローブ数 / 間隔</span><input class="num" value="200"><input class="num" value="20">ms</div>
+  <div class="row"><span class="lbl">RTTモニタ集計窓</span><input class="num" value="1"> 秒</div>
+  <p class="hint">iperf -P / --omit 相当。衛星は高BDPのため並列4〜8本推奨。範囲・既定値は各項目にメモ表示。</p>`;
+
+// ---- レイアウト定義 ---------------------------------------------------------
+const LAYOUT = {
+  sender: ['control_sender','netinfo_s','settings','rfstate','serving','sky','weather',
+           'loadtest','sinr_tp','sinr_rtt','loss','sinr_model','ho_timeline'],
+  receiver: ['control_receiver','netinfo_r','serverstate','serving','sky','weather',
+             'sinr_model','ho_timeline'],
+};
+const RENDER = {
+  control_sender:C.control_sender, control_receiver:C.control_receiver,
+  netinfo_s:()=>C.netinfo('sender'), netinfo_r:()=>C.netinfo('receiver'),
+  settings:C.settings, rfstate:C.rfstate, loadtest:C.loadtest, sinr_tp:C.sinr_tp,
+  sinr_rtt:C.sinr_rtt, loss:C.loss, serverstate:C.serverstate, serving:C.serving,
+  sky:C.sky, weather:C.weather, sinr_model:C.sinr_model, ho_timeline:C.ho_timeline,
+};
+function setMode(m){
+  document.getElementById('btnSender').classList.toggle('on', m==='sender');
+  document.getElementById('btnReceiver').classList.toggle('on', m==='receiver');
+  document.getElementById('modeSel').textContent = m==='sender'?'送信（測定）側':'受信側';
+  document.getElementById('board').innerHTML = LAYOUT[m].map(k=>RENDER[k]()).join('');
+}
+setMode('sender');
+</script>
