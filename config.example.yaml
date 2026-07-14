@@ -98,6 +98,15 @@ netqual:
                             # 衛星は高 BDP のため 4〜8 で実効容量に近づく
   throughput_omit_seconds: 0 # スロースタート除外秒 (iperf --omit 相当)。高 RTT なら 1〜2
 
+  # スループット測定エンジン: "builtin"(内蔵) or "iperf3"(委譲)。
+  #   iperf3 は C 実装で高速リンクでも高精度だが、対向に iperf3 サーバが必要。
+  #   engine=iperf3 にすると受信側は iperf3 サーバを自動起動 (iperf_port)、
+  #   送信側は iperf3 に委譲する。iperf3 が無ければ内蔵測定にフォールバック。
+  #   RTT/ジッタ/ロス/順序逆転は engine に関わらず常に内蔵で測定。
+  engine: "builtin"
+  iperf_port: 5201          # engine=iperf3 用 (受信側で開放・OS FW 許可が必要)
+  # iperf_bin: "iperf3"     # PATH に無い場合は絶対パスを指定
+
   # 測定先は複数登録でき、ラベル別にグラフ表示される。
   # Web UI (計測コントロール) からも追加/削除/ON・OFF できるので、
   # ここには常用の測定先だけ書けばよい。

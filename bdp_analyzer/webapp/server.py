@@ -197,10 +197,15 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
         running = orchestrator is not None and \
             orchestrator.netqual_server is not None
         d = orchestrator._net_defaults() if orchestrator else {}
+        srv = orchestrator.netqual_server if orchestrator else None
+        iperf_running = bool(srv and getattr(srv, "_iperf_proc", None) is not None)
         return jsonify({
             "running": running,
             "control_port": d.get("control_port"),
             "udp_port": d.get("udp_port"),
+            "engine": d.get("engine"),
+            "iperf_running": iperf_running,
+            "iperf_port": d.get("iperf_port") if iperf_running else None,
             "allowed": [str(n) for n in nsv._ALLOWED_NETS] or ["(全許可)"],
             **nsv.get_activity(),
         })

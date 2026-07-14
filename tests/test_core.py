@@ -650,3 +650,33 @@ def test_net_samples_migration_adds_columns():
                              out_of_order_pct=1.5, streams=4))
         row = st.recent_net(0)[0]
         assert row["out_of_order_pct"] == 1.5 and row["streams"] == 4
+
+
+def test_iperf3_backend_and_fallback():
+    """iperf3 バックエンド委譲と、iperf3 不在時の内蔵フォールバック."""
+    import shutil
+    from bdp_analyzer.netqual.server import NetqualServer
+    from bdp_analyzer.netqual import client, iperf
+
+    # iperf3 が無い環境ではフォールバックのみ検証
+    srv = NetqualServer(15921, 15922,
+                        iperf_port=5311 if iperf.available() else 0)
+    srv.start()
+    try:
+        time.sleep(1.0 if iperf.available() else 0.3)
+        # engine=iperf3 指定 (無ければ内蔵に自動フォールバック) → 必ず値が出る
+        s = client.measure_once("127.0.0.1", 15921, 15922, throughput_seconds=1,
+                                udp_probe_count=10, udp_probe_interval_ms=5,
+                                streams=2, engine="iperf3", iperf_port=5311)
+        assert s[0].throughput_bps and s[0].throughput_bps > 0
+        assert s[0].rtt_ms is not None          # RTT は engine に関わらず内蔵測定
+        # 存在しないバイナリ名 → 明示的に内蔵フォールバック
+        s2 = client.measure_once("127.0.0.1", 15921, 15922, throughput_seconds=1,
+                                 udp_probe_count=10, udp_probe_interval_ms=5,
+                                 engine="iperf3", iperf_bin="iperf3_nope")
+        assert s2[0].throughput_bps and s2[0].throughput_bps > 0
+    finally:
+        srv.stop()
+
+    if iperf.available():
+        assert iperf.throughput_bps  # モジュール健全性

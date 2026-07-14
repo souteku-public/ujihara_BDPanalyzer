@@ -836,7 +836,9 @@ async function refreshServerStats() {
     ['拒否', (s.udp_counts?.denied ?? 0), 'pkt'],
   ];
   $('#svkpi').innerHTML = kpi.map(k=>`<div class="kpi"><div class="v">${k[1]}<span style="font-size:13px;color:var(--muted)"> ${k[2]}</span></div><div class="l">${k[0]}</div></div>`).join('');
-  $('#svallowed').textContent = '許可送信元: ' + (s.allowed||[]).join(', ');
+  $('#svallowed').innerHTML = '許可送信元: ' + (s.allowed||[]).join(', ') +
+    ` ／ スループットエンジン: <b>${s.engine||'builtin'}</b>` +
+    (s.iperf_running ? ` (iperf3 サーバ :${s.iperf_port} 稼働中)` : '');
   $('#svEvents tbody').innerHTML = (s.tcp_events||[]).slice(0,12).map(e=>`
     <tr${e.cmd==='DENIED'?' style="color:#ff7a7a"':''}>
       <td>${new Date(e.ts*1000).toLocaleTimeString('ja-JP')}</td>

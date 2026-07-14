@@ -170,6 +170,9 @@ class Orchestrator:
             "rtt_agg_seconds": 1.0,
             "throughput_streams": int(nq.get("throughput_streams", 1)),
             "throughput_omit_seconds": float(nq.get("throughput_omit_seconds", 0)),
+            "engine": nq.get("engine", "builtin"),
+            "iperf_port": int(nq.get("iperf_port", 5201)),
+            "iperf_bin": nq.get("iperf_bin", "iperf3"),
         }
         for k, v in self.tuning.items():     # UI での上書きを反映 (次回測定から有効)
             if k in d:
@@ -191,6 +194,9 @@ class Orchestrator:
             bind_ip=target.get("bind_ip"),
             streams=int(target.get("streams", d["throughput_streams"])),
             omit_seconds=d["throughput_omit_seconds"],
+            engine=target.get("engine", d["engine"]),
+            iperf_port=int(target.get("iperf_port", d["iperf_port"])),
+            iperf_bin=d["iperf_bin"],
         )
         for s in samples:
             self.storage.add_net(s)
@@ -284,9 +290,12 @@ class Orchestrator:
             if self.netqual_server is None:
                 from .netqual.server import NetqualServer
                 d = self._net_defaults()
+                # engine=iperf3 のときは受信側で iperf3 サーバも起動
+                iperf_port = d["iperf_port"] if d["engine"] == "iperf3" else 0
                 self.netqual_server = NetqualServer(
                     d["control_port"], d["udp_port"],
-                    allowed_sources=self.config.netqual.get("allowed_sources"))
+                    allowed_sources=self.config.netqual.get("allowed_sources"),
+                    iperf_port=iperf_port, iperf_bin=d["iperf_bin"])
                 self.netqual_server.start()
         elif j["kind"] == "rttmon":
             if j["thread"] is None:

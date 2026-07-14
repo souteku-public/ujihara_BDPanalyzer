@@ -19,7 +19,7 @@ Starlink Mini・OneWeb(Kymeta / Intellian)の**電波(RF)側メトリクス**と
 | Kymeta の WebGUI から IP 指定で情報記録 | **Kymeta コレクタ**（HTTPS WebGUI をスクレイプ, `config` で IP と項目マッピング） |
 | Starlink mini の電波監視ソリューション | **Starlink コレクタ**（Dish の gRPC からボアサイト方位/仰角・SNR系・障害物・遅延を取得） |
 | OneWeb Intellian の電波監視ソリューション | **Intellian コレクタ**（LUI スクレイプ / SNMP。取れない項目は TLE 予測で補完） |
-| スループット・ジッタ・RTT の測定 | **netqual**（送信/受信 2 台構成の自己完結測定。**並列ストリーム / スロースタート除外 / 順序逆転**など iperf 相当項目を網羅） |
+| スループット・ジッタ・RTT の測定 | **netqual**（送信/受信 2 台構成の自己完結測定。**並列ストリーム / スロースタート除外 / 順序逆転**など iperf 相当項目を網羅。`engine: iperf3` で**スループットのみ iperf3 に委譲**も可） |
 | SINR との対比 | ダッシュボードの「SINR vs スループット / RTT・ジッタ」対比グラフ + `/api/correlation` |
 | 両衛星の状況表示 & ハンドオーバー予測 | **handover**（CelesTrak TLE + SGP4 で可視衛星とハンドオーバー時刻を予測） |
 | 送受 2 台での測定 | **送受兼用の 1 ソフト**（`role: both`）で双方向測定。役割分離（`sender`/`receiver`）も可 |
@@ -371,6 +371,35 @@ config で書く場合は各 target に `bind_ip:` を指定します（config.e
   開始タイミングが自然にずれるため問題になりにくい）。
 - 対向（受信側）は 1 台で共用できます。全回線が同じ受信サーバへ測ることで、
   受信側条件を揃えた公平な回線間比較になります。
+
+---
+
+## スループット測定エンジン（内蔵 / iperf3）
+
+スループットは 2 つのエンジンから選べます（`config.yaml` の `netqual.engine`）。
+RTT・ジッタ・ロス・順序逆転・SINR/天気との相関・記録は **engine に関わらず本体が担当**します。
+
+| engine | 精度・速度 | 前提 | 用途 |
+|---|---|---|---|
+| `builtin`（既定） | LEO 実速度域（〜数百Mbps）では iperf3 と誤差レベルで一致。実効上限は環境依存で数 Gbps | 追加不要 | 通常はこれで十分 |
+| `iperf3` | C 実装で高速リンクでも高精度・高スループット | 対向に iperf3 サーバ（本アプリ受信側が `iperf_port` 指定で自動起動）。無ければ内蔵に自動フォールバック | 1Gbps 超や iperf 準拠の数値が必要な場合 |
+
+実測比較（同一ループバック、参考値）: TCP スループットは iperf3 の方が内蔵より
+高速に出る（例: 単一ストリームで iperf3 ≈ 9.9 Gbps / 内蔵 ≈ 7.3 Gbps、
+4 並列で iperf3 ≈ 52 Gbps / 内蔵 ≈ 8 Gbps=Python の GIL で頭打ち）。一方
+UDP の既知オファーレート 50Mbit に対する実効レート・ロス・ジッタは両者ほぼ同一で、
+**LEO の実速度域では内蔵で精度上の問題はありません**。
+
+使い方（iperf3 委譲）:
+```yaml
+netqual: { engine: iperf3, iperf_port: 5201 }
+```
+```bash
+# 受信側 (単体起動時): iperf3 サーバも一緒に上げる
+python -m bdp_analyzer receiver --iperf-port 5201
+# 送信側 CLI で試す
+python -m bdp_analyzer sender <host> --engine iperf3 --streams 4
+```
 
 ---
 

@@ -190,27 +190,51 @@ def _udp_stats(host: str, port: int, count: int, interval_ms: float,
     return result
 
 
+def _throughput(host, control_port, seconds, timeout, bind_ip, streams, omit,
+                direction, engine, iperf_port, iperf_bin):
+    """スループット [bps]。engine='iperf3' かつ利用可能なら iperf3 に委譲、
+    それ以外/失敗時は内蔵 TCP 実装にフォールバックする."""
+    if engine == "iperf3":
+        from . import iperf
+        if iperf.available(iperf_bin):
+            bps = iperf.throughput_bps(
+                host, iperf_port, seconds, direction=direction,
+                streams=streams, omit=omit, bind_ip=bind_ip, binary=iperf_bin)
+            if bps is not None:
+                return bps
+            log.warning("iperf3 委譲に失敗、内蔵測定にフォールバック (%s)", direction)
+        else:
+            log.warning("engine=iperf3 だが iperf3 が見つからないため内蔵測定を使用")
+    fn = _tcp_downlink_bps if direction == "downlink" else _tcp_uplink_bps
+    return _parallel_bps(fn, streams, host, control_port, seconds, timeout,
+                         bind_ip, omit)
+
+
 def measure_once(host: str, control_port: int, udp_port: int, *,
                  throughput_seconds: float = 5, udp_probe_count: int = 200,
                  udp_probe_interval_ms: float = 20, timeout: float = 8,
                  session: Optional[str] = None,
                  bind_ip: Optional[str] = None,
-                 streams: int = 1, omit_seconds: float = 0.0) -> List[NetSample]:
+                 streams: int = 1, omit_seconds: float = 0.0,
+                 engine: str = "builtin", iperf_port: int = 5201,
+                 iperf_bin: str = "iperf3") -> List[NetSample]:
     """1 サイクル測定し、downlink/uplink の NetSample を返す.
 
     bind_ip を指定すると全ソケットの送信元をそのアダプタ IP に固定する
     (マルチ NIC で回線ごとに測定を分ける用途)。
     streams>1 で並列 TCP ストリームの合算スループット (iperf -P 相当)、
     omit_seconds でスループット計測から先頭の TCP スロースタート分を除外する。
+    engine="iperf3" にすると、スループットのみ iperf3 に委譲 (高速リンクで高精度、
+    要: 対向で iperf3 サーバ)。RTT/ジッタ/ロス/順序逆転は常に内蔵で測定する。
     """
     session = session or host
     streams = max(1, int(streams))
-    down = _parallel_bps(_tcp_downlink_bps, streams,
-                         host, control_port, throughput_seconds, timeout,
-                         bind_ip, omit_seconds)
-    up = _parallel_bps(_tcp_uplink_bps, streams,
-                       host, control_port, throughput_seconds, timeout,
-                       bind_ip, omit_seconds)
+    down = _throughput(host, control_port, throughput_seconds, timeout, bind_ip,
+                       streams, omit_seconds, "downlink", engine, iperf_port,
+                       iperf_bin)
+    up = _throughput(host, control_port, throughput_seconds, timeout, bind_ip,
+                     streams, omit_seconds, "uplink", engine, iperf_port,
+                     iperf_bin)
     udp = _udp_stats(host, udp_port, udp_probe_count, udp_probe_interval_ms,
                      timeout, bind_ip)
     now = time.time()

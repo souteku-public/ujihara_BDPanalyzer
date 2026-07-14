@@ -23,3 +23,7 @@ pysnmp>=4.4
 # NOTE: The Starlink collector uses the external `grpcurl` binary
 #       (https://github.com/fullstorydev/grpcurl). Install it on the OS,
 #       not via pip. See README "Starlink Mini" section.
+#
+# NOTE: netqual engine=iperf3 uses the external `iperf3` binary (optional).
+#       Install on the OS (apt/brew/choco); not a pip package. Builtin engine
+#       works without it. See the README throughput-engine section.

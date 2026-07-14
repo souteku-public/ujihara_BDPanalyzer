@@ -59,7 +59,8 @@ def cmd_sender(args) -> None:
     while True:
         samples = measure_once(args.host, args.control_port, args.udp_port,
                                throughput_seconds=args.seconds,
-                               streams=args.streams, omit_seconds=args.omit)
+                               streams=args.streams, omit_seconds=args.omit,
+                               engine=args.engine, iperf_port=args.iperf_port)
         for s in samples:
             tp = f"{s.throughput_bps/1e6:.2f}Mbps" if s.throughput_bps else "n/a"
             print(f"{time.strftime('%H:%M:%S')} [{s.direction}] {tp} "
@@ -113,6 +114,9 @@ def main() -> None:
                    help="並列 TCP ストリーム数 (iperf -P 相当)")
     s.add_argument("--omit", type=float, default=0.0,
                    help="スロースタート除外秒 (iperf --omit 相当)")
+    s.add_argument("--engine", choices=["builtin", "iperf3"], default="builtin",
+                   help="スループット測定エンジン (iperf3 は対向に iperf3 サーバ要)")
+    s.add_argument("--iperf-port", type=int, default=5201)
     s.add_argument("--loop", action="store_true")
     s.add_argument("--interval", type=float, default=30)
     s.set_defaults(func=cmd_sender)

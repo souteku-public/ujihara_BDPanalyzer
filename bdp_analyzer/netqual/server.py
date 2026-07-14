@@ -17,8 +17,10 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import shutil
 import socket
 import socketserver
+import subprocess
 import threading
 import time
 
@@ -266,13 +268,17 @@ class NetqualServer:
     """
 
     def __init__(self, control_port: int, udp_port: int,
-                 allowed_sources=None):
+                 allowed_sources=None, iperf_port: int = 0,
+                 iperf_bin: str = "iperf3"):
         self.control_port = control_port
         self.udp_port = udp_port
+        self.iperf_port = int(iperf_port or 0)   # 0 なら iperf3 サーバを起動しない
+        self.iperf_bin = iperf_bin
         set_allowed_sources(allowed_sources)
         self._stop = threading.Event()
         self._tcp: _ThreadingTCP | None = None
         self._threads: list[threading.Thread] = []
+        self._iperf_proc = None
 
     def start(self) -> None:
         self._stop.clear()
@@ -287,17 +293,37 @@ class NetqualServer:
         self._threads.append(st)
         log.info("netqual server listening: TCP :%d / UDP :%d",
                  self.control_port, self.udp_port)
+        self._start_iperf()
+
+    def _start_iperf(self) -> None:
+        if not self.iperf_port:
+            return
+        if shutil.which(self.iperf_bin) is None:
+            log.warning("iperf_port 指定だが %s が見つからないため iperf3 サーバ未起動",
+                        self.iperf_bin)
+            return
+        try:
+            self._iperf_proc = subprocess.Popen(
+                [self.iperf_bin, "-s", "-p", str(self.iperf_port)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            log.info("iperf3 サーバ起動: :%d", self.iperf_port)
+        except OSError as e:
+            log.warning("iperf3 サーバ起動失敗: %s", e)
 
     def stop(self) -> None:
         self._stop.set()
         if self._tcp is not None:
             self._tcp.shutdown()
+        if self._iperf_proc is not None:
+            self._iperf_proc.terminate()
+            self._iperf_proc = None
 
 
 def run_server(control_port: int, udp_port: int,
-               allowed_sources=None) -> None:
+               allowed_sources=None, iperf_port: int = 0) -> None:
     """フォアグラウンドで受信サーバを起動 (`receiver` サブコマンド用)."""
-    srv = NetqualServer(control_port, udp_port, allowed_sources)
+    srv = NetqualServer(control_port, udp_port, allowed_sources,
+                        iperf_port=iperf_port)
     srv.start()
     try:
         while not srv._stop.is_set():
@@ -318,8 +344,10 @@ def main() -> None:
     ap.add_argument("--allow", action="append", default=[],
                     help="許可する送信元 CIDR (複数指定可、未指定なら全許可)。"
                          "例: --allow 203.0.113.10/32 --allow 198.51.100.0/24")
+    ap.add_argument("--iperf-port", type=int, default=0,
+                    help="指定すると iperf3 サーバも起動 (例: 5201)。engine=iperf3 用")
     args = ap.parse_args()
-    run_server(args.control_port, args.udp_port, args.allow)
+    run_server(args.control_port, args.udp_port, args.allow, args.iperf_port)
 
 
 if __name__ == "__main__":
