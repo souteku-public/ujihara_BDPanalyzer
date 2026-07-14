@@ -680,3 +680,46 @@ def test_iperf3_backend_and_fallback():
 
     if iperf.available():
         assert iperf.throughput_bps  # モジュール健全性
+
+
+def test_ingest_and_local_csv():
+    """インストール制限の送信 PC 想定: /api/ingest 中央記録 + ローカル CSV 出力."""
+    import json
+    from bdp_analyzer.config import Config, GroundStation
+    from bdp_analyzer.orchestrator import Orchestrator
+    from bdp_analyzer.webapp.server import create_app
+    from bdp_analyzer.__main__ import _append_net_csv
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(raw={}, ground_station=GroundStation(),
+                     db_path=os.path.join(d, "rx.sqlite"), collectors=[],
+                     netqual={"enabled": False, "ingest_token": "secret"},
+                     handover={"enabled": False}, webapp={})
+        orch = Orchestrator(cfg)
+        orch.start()
+        try:
+            c = create_app(orch.storage, orch).test_client()
+            payload = {"token": "secret", "samples": [
+                {"ts": time.time(), "session": "sat", "direction": "downlink",
+                 "throughput_bps": 5e7, "rtt_ms": 40, "streams": 4},
+                {"ts": time.time(), "session": "sat", "direction": "uplink",
+                 "throughput_bps": 8e6}]}
+            r = c.post("/api/ingest", json=payload)
+            assert r.get_json()["stored"] == 2
+            assert len(orch.storage.recent_net(0)) == 2
+            # token 不一致 → 403
+            bad = c.post("/api/ingest", json={"token": "x", "samples": payload["samples"]})
+            assert bad.status_code == 403
+        finally:
+            orch.stop()
+
+        # ローカル CSV 追記 (stdlib のみ、ヘッダ + 追記)
+        from bdp_analyzer.model import NetSample
+        csv_path = os.path.join(d, "out.csv")
+        s = [NetSample(ts=time.time(), session="sat", direction="downlink",
+                       throughput_bps=5e7, streams=4)]
+        _append_net_csv(csv_path, s)
+        _append_net_csv(csv_path, s)   # 追記 (ヘッダは 1 回だけ)
+        lines = open(csv_path, encoding="utf-8-sig").read().splitlines()
+        assert lines[0].startswith("ts,time_iso,session,direction,throughput_bps")
+        assert len(lines) == 3         # header + 2 data rows

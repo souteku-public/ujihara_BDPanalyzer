@@ -66,9 +66,48 @@ def cmd_sender(args) -> None:
             print(f"{time.strftime('%H:%M:%S')} [{s.direction}] {tp} "
                   f"(x{s.streams}) rtt={s.rtt_ms}ms jitter={s.jitter_ms}ms "
                   f"loss={s.loss_pct}% ooo={s.out_of_order_pct}%")
+        if args.csv:
+            _append_net_csv(args.csv, samples)         # ローカル CSV に追記 (stdlib)
+        if args.post:
+            _post_samples(args.post, samples, args.token)  # 受信側へ送信 (stdlib)
         if not args.loop:
             break
         time.sleep(args.interval)
+
+
+# 送信 CLI はインストール不要 (標準ライブラリのみ) で動くよう、CSV/POST も stdlib 実装
+_NET_CSV_COLS = ["ts", "time_iso", "session", "direction", "throughput_bps",
+                 "streams", "rtt_ms", "rtt_min_ms", "rtt_max_ms", "jitter_ms",
+                 "loss_pct", "out_of_order_pct", "owd_ms"]
+
+
+def _append_net_csv(path, samples) -> None:
+    import csv
+    import os
+    from datetime import datetime
+    new = not os.path.exists(path) or os.path.getsize(path) == 0
+    with open(path, "a", newline="", encoding="utf-8-sig") as fh:
+        w = csv.writer(fh)
+        if new:
+            w.writerow(_NET_CSV_COLS)
+        for s in samples:
+            row = s.as_row()
+            row["time_iso"] = datetime.fromtimestamp(row["ts"]).astimezone().isoformat()
+            w.writerow(["" if row.get(c) is None else row.get(c) for c in _NET_CSV_COLS])
+
+
+def _post_samples(url, samples, token) -> None:
+    import json
+    import urllib.request
+    body = json.dumps({"samples": [s.as_row() for s in samples],
+                       "token": token or ""}).encode()
+    req = urllib.request.Request(url, data=body,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+    except Exception as e:  # noqa: BLE001
+        print(f"  (POST 失敗: {e})")
 
 
 def cmd_predict(args) -> None:
@@ -117,6 +156,10 @@ def main() -> None:
     s.add_argument("--engine", choices=["builtin", "iperf3"], default="builtin",
                    help="スループット測定エンジン (iperf3 は対向に iperf3 サーバ要)")
     s.add_argument("--iperf-port", type=int, default=5201)
+    s.add_argument("--csv", help="結果をこの CSV に追記 (ローカル保存・インストール不要)")
+    s.add_argument("--post", help="結果を受信側の /api/ingest へ送信し中央記録 "
+                                  "(例: http://<受信IP>:8080/api/ingest)")
+    s.add_argument("--token", default="", help="--post 時の ingest_token (設定時のみ)")
     s.add_argument("--loop", action="store_true")
     s.add_argument("--interval", type=float, default=30)
     s.set_defaults(func=cmd_sender)

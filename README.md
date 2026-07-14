@@ -374,6 +374,30 @@ config で書く場合は各 target に `bind_ip:` を指定します（config.e
 
 ---
 
+## 送信 PC に何もインストールできない場合（社用 PC など）
+
+送信（測定）側は **Python 標準ライブラリだけで動作**します。追加の pip パッケージ
+（Flask/requests 等）も grpcurl も iperf3 も不要で、**DHCP のままで問題ありません**
+（送信側はアウトバウンド通信のみ・固定 IP もポート開放も不要）。受信側だけを
+固定 IP + ポート開放にしてください。
+
+- **Python すら入れられない**: 公式の「embeddable package（zip 版）」を展開すれば
+  インストーラ不要・管理者権限なしで `python.exe` を実行できます（USB からでも可）。
+- **測定結果の扱い（インストール不要のまま）**:
+  ```bash
+  # ① ローカル CSV に保存（CSV ビューアで後から可視化）
+  python -m bdp_analyzer sender <受信側IP> --loop --csv result.csv
+  # ② 受信側へ送って中央のダッシュボード/DB に記録
+  python -m bdp_analyzer sender <受信側IP> --loop --post http://<受信側IP>:8080/api/ingest --token <任意>
+  ```
+  `--csv` は標準ライブラリの csv、`--post` は urllib のみを使うため、送信 PC に
+  何も追加せず動きます。受信側 `config.yaml` の `netqual.ingest_token` を設定すると
+  `--token` 一致を要求します（未設定なら不要）。
+- ダッシュボードや衛星予測・天気など「見る」機能を使うのは、インストール可能な
+  受信側 PC 側に任せる構成が確実です。
+
+---
+
 ## スループット測定エンジン（内蔵 / iperf3）
 
 スループットは 2 つのエンジンから選べます（`config.yaml` の `netqual.engine`）。

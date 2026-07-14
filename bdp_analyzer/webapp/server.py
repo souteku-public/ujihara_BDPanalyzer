@@ -224,6 +224,30 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
     def api_weather():
         return jsonify(storage.recent_weather(_since()))
 
+    @app.route("/api/ingest", methods=["POST"])
+    def api_ingest():
+        # インストール制限のある送信 PC (sender CLI) から測定結果を受け取り中央記録する。
+        # 送信側は stdlib のみ (urllib) で POST でき、受信側でダッシュボード/DB に反映される。
+        import dataclasses
+        from ..model import NetSample
+        body = request.get_json(force=True, silent=True) or {}
+        token_cfg = (orchestrator.config.netqual.get("ingest_token")
+                     if orchestrator else None)
+        if token_cfg and body.get("token") != token_cfg:
+            return jsonify({"ok": False, "error": "token 不一致"}), 403
+        fields = {f.name for f in dataclasses.fields(NetSample)}
+        stored = 0
+        for s in body.get("samples", []):
+            row = {k: v for k, v in s.items() if k in fields}
+            if "ts" not in row or "session" not in row:
+                continue
+            try:
+                storage.add_net(NetSample(**row))
+                stored += 1
+            except (TypeError, ValueError):
+                continue
+        return jsonify({"ok": True, "stored": stored})
+
     # ---- 実験マーカー (アンテナ間距離の変更等をデータに刻む) ------------------
     @app.route("/api/markers")
     def api_markers():

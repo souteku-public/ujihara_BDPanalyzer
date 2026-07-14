@@ -87,6 +87,10 @@ netqual:
   # 合わせた多層防御)。空リストなら全許可。
   # 例: 対向拠点の固定 IP のみ許可
   allowed_sources: []
+
+  # 送信 PC が sender CLI の --post で結果を送ってくる場合の認証トークン (任意)。
+  # 空なら誰でも /api/ingest に記録できる (allowed_sources / ルータ側で制限推奨)。
+  ingest_token: ""
   # allowed_sources:
   #   - "203.0.113.10/32"      # OneWeb 側送信拠点 (固定 IP)
   #   - "198.51.100.0/24"      # Starlink 側の出口 IP レンジ (変動に注意)
