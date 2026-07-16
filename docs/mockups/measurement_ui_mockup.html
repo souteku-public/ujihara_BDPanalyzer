@@ -104,7 +104,7 @@
       <span>表示モード <span id="modeSel" class="sel hot">送信（測定）側</span></span>
       <span>検証対象 <span class="sel">Starlink</span></span>
       <span>期間 <span class="sel">30分</span></span>
-      <span style="border-left:1px solid var(--line);padding-left:8px">CSV: RF / 通信品質 / 負荷 / HO</span>
+      <span style="border-left:1px solid var(--line);padding-left:8px">CSV: RF / 通信品質 / 負荷 / HO ／ <span style="color:var(--accent)">CSVビューア↗</span></span>
     </div>
   </header>
 
@@ -229,17 +229,17 @@ C.sinr_rtt = ()=>`<div class="card"><h2>SINR vs RTT / ジッタ<span class="tag 
     {color:'var(--warn)',data:series(40,0.6,0.15,2)}],{h:80})}
   ${legend([{color:'var(--crit)',t:'RTT 41ms'},{color:'var(--oneweb)',t:'Jitter 3.2ms',dash:1},{color:'var(--warn)',t:'SINR (右軸)'}])}`;
 
-C.loss = ()=>`<div class="card"><h2>パケットロス<span class="tag s">送信側</span></h2>
+C.loss = ()=>`<div class="card"><h2>パケットロス / 順序逆転<span class="tag s">送信側</span></h2>
   ${lineChart([
     {color:'var(--crit)',fill:true,data:series(40,0.18,0.14,6)},
     {color:'var(--starlink)',dash:'2 3',data:series(40,0.08,0.08,11)}],{h:80})}
-  ${legend([{color:'var(--crit)',t:'Loss 0.8%'},{color:'var(--starlink)',t:'順序逆転 0.2%',dash:1}])}`;
+  ${legend([{color:'var(--crit)',t:'Loss 0.8%'},{color:'var(--starlink)',t:'順序逆転(out-of-order) 0.2%',dash:1}])}`;
 
 C.serverstate = ()=>`<div class="card"><h2>受信サーバ状態<span class="tag r">受信側</span></h2>
   <div class="kpis">
     ${kpi('稼働中','','状態')}${kpi('5301','','TCP')}${kpi('5302','','UDP')}
     ${kpi('1,284','回','UDPエコー応答')}${kpi('939','pkt','負荷受信')}${kpi('3','pkt','拒否')}</div>
-  <p class="hint">許可送信元: 198.51.100.72/32</p>
+  <p class="hint">許可送信元: 198.51.100.72/32 ／ スループットエンジン: <b>iperf3</b> (iperf3 サーバ :5201 稼働中)</p>
   <table><thead><tr><th>時刻</th><th>送信元</th><th>要求</th></tr></thead><tbody>
     <tr><td>14:22:07</td><td>198.51.100.72</td><td>下りスループット</td></tr>
     <tr><td>14:22:02</td><td>198.51.100.72</td><td>上り負荷</td></tr>
