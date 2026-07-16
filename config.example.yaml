@@ -132,6 +132,20 @@ netqual:
     # - label: "OneWeb経由"
     #   host: "203.0.113.10"       # 同じ対向でも別アダプタ経由で測れる
     #   bind_ip: "10.0.50.23"      # OneWeb 側アダプタの自分の IP
+    # 受信側 PC 不要の「インターネット速度」測定 (公開エンドポイントへ、単独端末)。
+    # 衛星区間の実効速度の目安を得たいとき。host は不要、mode: internet を指定。
+    # - label: "インターネット速度(Starlink)"
+    #   mode: internet
+    #   enabled: true
+    #   throughput_seconds: 10     # 上り/下り各測定の秒数
+    #   streams: 4                 # 高 BDP 対策の並列接続数
+
+  # mode: internet の測定先が使う公開エンドポイント (既定: Cloudflare)。
+  # 社内で別サーバを使う場合に上書き。
+  # internet_endpoints:
+  #   down_url: "https://speed.cloudflare.com/__down?bytes="
+  #   up_url:   "https://speed.cloudflare.com/__up"
+  #   rtt_host: "speed.cloudflare.com"
 
   # (旧形式) peer_host: "203.0.113.10" も引き続き使用可 (targets が無い場合のみ)
 

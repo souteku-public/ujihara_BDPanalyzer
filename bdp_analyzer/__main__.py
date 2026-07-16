@@ -110,6 +110,33 @@ def _post_samples(url, samples, token) -> None:
         print(f"  (POST 失敗: {e})")
 
 
+def cmd_inettest(args) -> None:
+    """単独端末 (受信側 PC 不要) で公開エンドポイントへ速度測定."""
+    from .netqual import inetspeed
+    ep = {}
+    if args.down_url:
+        ep["down_url"] = args.down_url
+    if args.up_url:
+        ep["up_url"] = args.up_url
+    if args.rtt_host:
+        ep["rtt_host"] = args.rtt_host
+    while True:
+        samples = inetspeed.measure_public(
+            endpoints=ep or None, seconds=args.seconds, streams=args.streams,
+            session=args.label, bind_ip=args.bind)
+        for s in samples:
+            tp = f"{s.throughput_bps/1e6:.1f}Mbps" if s.throughput_bps else "n/a"
+            print(f"{time.strftime('%H:%M:%S')} [{s.direction}] {tp} "
+                  f"(x{s.streams}) rtt={s.rtt_ms}ms")
+        if args.csv:
+            _append_net_csv(args.csv, samples)
+        if args.post:
+            _post_samples(args.post, samples, args.token)
+        if not args.loop:
+            break
+        time.sleep(args.interval)
+
+
 def cmd_predict(args) -> None:
     import os
     from .config import load_config
@@ -163,6 +190,22 @@ def main() -> None:
     s.add_argument("--loop", action="store_true")
     s.add_argument("--interval", type=float, default=30)
     s.set_defaults(func=cmd_sender)
+
+    it = sub.add_parser("inettest",
+                        help="単独端末で公開エンドポイントへ速度測定 (受信側 PC 不要)")
+    it.add_argument("--seconds", type=float, default=10, help="上り/下り各測定の秒数")
+    it.add_argument("--streams", type=int, default=4, help="並列接続数 (高BDP対策)")
+    it.add_argument("--label", default="インターネット速度", help="測定先ラベル")
+    it.add_argument("--bind", help="送信元IP (マルチNIC時)")
+    it.add_argument("--down-url", help="下り用URL (既定: Cloudflare)")
+    it.add_argument("--up-url", help="上り用URL (既定: Cloudflare)")
+    it.add_argument("--rtt-host", help="RTT計測先ホスト (既定: speed.cloudflare.com)")
+    it.add_argument("--csv", help="結果をこの CSV に追記")
+    it.add_argument("--post", help="結果を受信側 /api/ingest へ送信")
+    it.add_argument("--token", default="")
+    it.add_argument("--loop", action="store_true")
+    it.add_argument("--interval", type=float, default=60)
+    it.set_defaults(func=cmd_inettest)
 
     p = sub.add_parser("predict", help="ハンドオーバー予測 単発表示")
     p.add_argument("--config", default="config.yaml")

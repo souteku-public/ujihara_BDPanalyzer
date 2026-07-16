@@ -723,3 +723,58 @@ def test_ingest_and_local_csv():
         lines = open(csv_path, encoding="utf-8-sig").read().splitlines()
         assert lines[0].startswith("ts,time_iso,session,direction,throughput_bps")
         assert len(lines) == 3         # header + 2 data rows
+
+
+def test_inetspeed_single_terminal():
+    """単独端末インターネット速度測定 (受信側 PC 不要, 公開エンドポイント方式)."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from bdp_analyzer.netqual import inetspeed
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            n = 2_000_000
+            self.send_response(200)
+            self.send_header("Content-Length", str(n))
+            self.end_headers()
+            b = b"x" * 65536
+            s = 0
+            while s < n:
+                try:
+                    self.wfile.write(b[:min(65536, n - s)])
+                except OSError:
+                    break
+                s += 65536
+
+        def do_POST(self):
+            ln = int(self.headers.get("Content-Length", 0))
+            while ln > 0:
+                d = self.rfile.read(min(65536, ln))
+                if not d:
+                    break
+                ln -= len(d)
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+    os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        ep = {"down_url": f"http://127.0.0.1:{port}/__down?bytes=",
+              "up_url": f"http://127.0.0.1:{port}/__up",
+              "rtt_host": "127.0.0.1", "rtt_port": port,
+              "down_bytes": 2_000_000, "up_chunk": 500_000}
+        s = inetspeed.measure_public(endpoints=ep, seconds=1, streams=2,
+                                     session="net")
+        assert len(s) == 2
+        assert s[0].direction == "downlink" and s[0].throughput_bps > 0
+        assert s[1].direction == "uplink" and s[1].throughput_bps > 0
+        assert s[0].rtt_ms is not None and s[0].streams == 2
+    finally:
+        srv.shutdown()

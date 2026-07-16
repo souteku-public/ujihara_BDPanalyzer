@@ -181,6 +181,23 @@ class Orchestrator:
 
     def _net_job(self, target: Dict[str, Any]):
         d = self._net_defaults()
+        # mode: internet → 受信側 PC 不要の公開エンドポイント速度測定 (単独端末)
+        if target.get("mode") == "internet":
+            from .netqual import inetspeed
+            samples = inetspeed.measure_public(
+                endpoints=self.config.netqual.get("internet_endpoints"),
+                seconds=float(target.get("throughput_seconds",
+                                         d["throughput_seconds"])),
+                streams=int(target.get("streams", d["throughput_streams"] or 4)),
+                session=target.get("label") or "インターネット速度",
+                bind_ip=target.get("bind_ip"))
+            for s in samples:
+                self.storage.add_net(s)
+            log.info("inettest[%s]: down=%.1fMbps up=%.1fMbps rtt=%sms",
+                     target.get("label"),
+                     (samples[0].throughput_bps or 0) / 1e6,
+                     (samples[1].throughput_bps or 0) / 1e6, samples[0].rtt_ms)
+            return
         samples = netclient.measure_once(
             target["host"],
             int(target.get("control_port", d["control_port"])),
@@ -650,8 +667,11 @@ class Orchestrator:
                 slug = _slug(label)
                 job_id = f"net:{slug}"
                 d = self._net_defaults()
-                detail = f"→ {t.get('host')}" + (
-                    f" (src {t['bind_ip']})" if t.get("bind_ip") else "")
+                if t.get("mode") == "internet":
+                    detail = "公開エンドポイント (受信側不要)"
+                else:
+                    detail = f"→ {t.get('host')}" + (
+                        f" (src {t['bind_ip']})" if t.get("bind_ip") else "")
                 self._register(job_id, label=label, kind="net",
                                interval_s=interval(job_id, float(
                                    t.get("interval_s", d["interval_s"]))),
@@ -659,11 +679,12 @@ class Orchestrator:
                                enabled=initial(job_id, measure_default
                                                and t.get("enabled", True)),
                                detail=detail, meta=dict(t))
-                self._register_rttmon(
-                    slug, dict(t),
-                    enabled=initial(f"rttmon:{slug}",
-                                    bool(t.get("rtt_monitor", False))),
-                    removable=False)
+                if t.get("mode") != "internet":     # 公開速度測定に RTT モニタは不適
+                    self._register_rttmon(
+                        slug, dict(t),
+                        enabled=initial(f"rttmon:{slug}",
+                                        bool(t.get("rtt_monitor", False))),
+                        removable=False)
             # UI から追加された測定先を復元 (保存されていた ON/OFF 状態も引き継ぐ)
             for t in state.get("targets", []):
                 slug = _slug(t.get("label", ""))

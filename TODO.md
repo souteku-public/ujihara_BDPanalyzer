@@ -24,6 +24,7 @@ BDP Analyzer の残作業・実機導入時の対応事項。チェックを入�
 - [x] iperf3 バックエンド（engine: iperf3 でスループットのみ委譲、受信側で iperf3 サーバ自動起動、
       不在時は内蔵にフォールバック。RTT/ジッタ/ロスは常に内蔵。実測: iperf3≈9.9G / 内蔵≈7.3G@単一TCP）
 - [x] インストール制限 PC 対応（送信 CLI は標準ライブラリのみ・DHCP 可。--csv ローカル保存 / --post で受信側 /api/ingest へ中央記録、portable Python 案内）
+- [x] 単独端末インターネット速度測定（受信側 PC 不要。inettest CLI / mode:internet 測定先。公開エンドポイント Cloudflare へ指定時間、並列・RTT・CSV/ingest 対応）
 - [x] Starlink get_history 対応（1 秒解像度履歴の差分回収、ソース名 `<name>:1s`）
 - [x] 常時 RTT モニタ（1 秒集計で RTT/ジッタ/ロスを連続記録、direction='rtt'）
 - [x] 時間解像度の UI 設定（各ジョブの実行間隔＋測定パラメータ、範囲・既定値メモ付き）
