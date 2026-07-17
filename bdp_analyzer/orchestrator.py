@@ -179,6 +179,14 @@ class Orchestrator:
                 d[k] = type(d[k])(v)
         return d
 
+    def _eff_bind(self, target: Dict[str, Any]) -> Optional[str]:
+        """測定に使う送信元 IP。測定先個別 > グローバル netqual.bind_ip の順。
+
+        グローバル bind_ip を設定すると、全測定トラフィック (TCP/UDP/負荷/RTT/
+        inettest) がその NIC に固定され、他 NIC (Wi-Fi 等) には一切流れない。
+        """
+        return target.get("bind_ip") or self.config.netqual.get("bind_ip")
+
     def _net_job(self, target: Dict[str, Any]):
         d = self._net_defaults()
         # mode: internet → 受信側 PC 不要の公開エンドポイント速度測定 (単独端末)
@@ -190,7 +198,7 @@ class Orchestrator:
                                          d["throughput_seconds"])),
                 streams=int(target.get("streams", d["throughput_streams"] or 4)),
                 session=target.get("label") or "インターネット速度",
-                bind_ip=target.get("bind_ip"))
+                bind_ip=self._eff_bind(target))
             for s in samples:
                 self.storage.add_net(s)
             log.info("inettest[%s]: down=%.1fMbps up=%.1fMbps rtt=%sms",
@@ -208,7 +216,7 @@ class Orchestrator:
             udp_probe_interval_ms=float(target.get("udp_probe_interval_ms",
                                                    d["udp_probe_interval_ms"])),
             session=target.get("label") or target["host"],
-            bind_ip=target.get("bind_ip"),
+            bind_ip=self._eff_bind(target),
             streams=int(target.get("streams", d["throughput_streams"])),
             omit_seconds=d["throughput_omit_seconds"],
             engine=target.get("engine", d["engine"]),
@@ -330,7 +338,7 @@ class Orchestrator:
                         session=meta.get("label") or meta["host"],
                         probe_interval_ms=d["rtt_probe_interval_ms"],
                         agg_seconds=d["rtt_agg_seconds"],
-                        bind_ip=meta.get("bind_ip")))
+                        bind_ip=self._eff_bind(meta)))
                 j["thread"].start()
         elif j["thread"] is None:
             j["thread"] = _Periodic(job_id, j["interval_s"], j["fn"])
@@ -607,7 +615,7 @@ class Orchestrator:
                 direction=direction, rates_bps=rates_bps,
                 step_seconds=step_seconds,
                 session=meta.get("label") or meta.get("host"),
-                bind_ip=meta.get("bind_ip"),
+                bind_ip=self._eff_bind(meta),
                 on_step=on_step)
         except Exception as e:  # noqa: BLE001
             with self._lock:
@@ -632,6 +640,19 @@ class Orchestrator:
 
         def interval(job_id: str, default: float) -> float:
             return float(self._interval_overrides.get(job_id, default))
+
+        # 有線固定: グローバル bind_ip が実在 NIC か検証 (誤設定で Wi-Fi へ漏れるのを防ぐ)
+        gbind = self.config.netqual.get("bind_ip")
+        if gbind:
+            local_ips = set(self.get_netinfo().get("local_ips", []))
+            if gbind in local_ips:
+                log.info("測定は送信元 %s (指定 NIC) に固定。他 NIC へは測定を流しません",
+                         gbind)
+            else:
+                log.error("netqual.bind_ip=%s がこの PC の NIC に見つかりません "
+                          "(検出: %s)。誤設定だと測定が意図しない NIC に出るため、"
+                          "有線 NIC の正しい IP を設定してください",
+                          gbind, ", ".join(sorted(local_ips)) or "なし")
 
         # RF コレクタ: 設定にある全機器を登録 (enabled は初期状態、UI で切替可)
         for cfg in self.config.collectors:

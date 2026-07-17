@@ -371,6 +371,27 @@ config で書く場合は各 target に `bind_ip:` を指定します（config.e
   Kymeta / Intellian の管理 IP も同様（各アダプタのサブネット内なら自動で
   on-link 経路が付くので通常は不要）。
 
+### 有線のみで測定し、Wi-Fi には測定を流さない
+
+「PC は有線で計測し、Wi-Fi はインターネット用(TLE/天気の取得のみ)」という構成では、
+`netqual.bind_ip` に**有線 NIC の自 IP を 1 つ設定するだけ**で、全測定トラフィック
+(TCP スループット / UDP プローブ / 負荷・耐久試験 / 常時 RTT / inettest)が
+その有線 NIC に固定され、**Wi-Fi には測定パケットが一切流れません**。
+
+```yaml
+netqual:
+  bind_ip: "192.168.10.10"   # このPCの有線NICのIP (全測定をここに固定)
+  targets:
+    - { label: "有線リンク計測", host: "192.168.10.20", enabled: true }
+handover: { enabled: true }   # TLE 取得は Wi-Fi(既定ルート)経由=測定ではない
+weather:  { enabled: true }   # 天気取得も同様
+```
+- 起動時に `bind_ip` が実在 NIC か検証し、見つからなければエラーで通知します
+  (誤設定で意図しない NIC に出るのを防止)
+- ハンドオーバー予測(TLE)・天気は「測定」ではない軽量な取得で、Wi-Fi 既定ルートを
+  通ります。Wi-Fi に一切通信を流したくない場合は `handover.enabled: false` /
+  `weather.enabled: false` にしてください(その場合、衛星予測と降雨補正は無効)。
+
 ### 同時測定の注意
 
 - **USB アダプタは USB3 対応の GbE を推奨**（USB2 は実効 ~300Mbps で頭打ちになり、

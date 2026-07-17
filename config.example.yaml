@@ -79,6 +79,13 @@ netqual:
   enabled: true
   role: "both"              # "both"(送受兼用) / "sender"(測定のみ) / "receiver"(応答のみ)
   serve: true               # 受信サーバを常駐するか (未指定なら role から自動)
+
+  # 測定を特定 NIC(有線など)に固定する送信元 IP。設定すると全測定トラフィック
+  # (TCP スループット / UDP プローブ / 負荷試験 / 常時RTT / inettest) が
+  # この NIC に固定され、他 NIC(Wi-Fi 等)には測定を一切流しません。
+  # 「有線で計測、Wi-Fi はインターネット用(TLE/天気の取得のみ)」構成に最適。
+  # 起動時に実在 NIC か検証し、見つからなければエラーで知らせます。
+  # bind_ip: "192.168.10.10"   # このPCの有線NICのIP
   control_port: 5301        # TCP: 制御 & スループット
   udp_port: 5302            # UDP: ジッタ/RTT/ロス
 

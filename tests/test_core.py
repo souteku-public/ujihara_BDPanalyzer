@@ -778,3 +778,27 @@ def test_inetspeed_single_terminal():
         assert s[0].rtt_ms is not None and s[0].streams == 2
     finally:
         srv.shutdown()
+
+
+def test_measurement_bind_pinning_and_validation():
+    """有線固定: グローバル bind_ip が全測定に既定適用され、個別が優先される."""
+    from bdp_analyzer.config import Config, GroundStation
+    from bdp_analyzer.orchestrator import Orchestrator
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(raw={}, ground_station=GroundStation(),
+                     db_path=os.path.join(d, "t.sqlite"), collectors=[],
+                     handover={"enabled": False}, webapp={},
+                     netqual={"enabled": True, "role": "sender",
+                              "bind_ip": "192.0.2.55", "targets": []})
+        orch = Orchestrator(cfg)
+        # グローバル既定 / 測定先個別が優先 / mode:internet でも同様
+        assert orch._eff_bind({"host": "10.0.0.1"}) == "192.0.2.55"
+        assert orch._eff_bind({"bind_ip": "10.9.9.9"}) == "10.9.9.9"
+        assert orch._eff_bind({"mode": "internet"}) == "192.0.2.55"
+        # bind 無し設定なら None (従来どおり OS ルート任せ)
+        cfg2 = Config(raw={}, ground_station=GroundStation(),
+                      db_path=os.path.join(d, "t2.sqlite"), collectors=[],
+                      handover={"enabled": False}, webapp={},
+                      netqual={"enabled": True, "role": "sender", "targets": []})
+        assert Orchestrator(cfg2)._eff_bind({"host": "x"}) is None
