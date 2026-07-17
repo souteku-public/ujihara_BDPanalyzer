@@ -373,6 +373,16 @@ config で書く場合は各 target に `bind_ip:` を指定します（config.e
 
 ### 有線のみで測定し、Wi-Fi には測定を流さない
 
+**本社(固定IP・受信側)**: `netqual.bind_ip` に固定IP(有線NIC)を設定すると、
+測定の送信元固定に加えて**受信サーバの待受もそのNICに限定**され、Wi-Fi 側 IP に
+来た測定要求には一切応答しません(=Wi-Fi へ測定信号が出ない)。単体起動なら
+`python -m bdp_analyzer receiver --bind <有線IP>`。
+
+**出先(DHCP・送信側)**: `bind_ip` を空にすれば OS 既定ルート、Wi-Fi の IP を
+測定先の `bind_ip`(または UI の送信元IP欄)に指定すれば **Wi-Fi 経由の測定**も
+その場で選べます(測定先ごとに有線/Wi-Fi を使い分け可能)。
+
+
 「PC は有線で計測し、Wi-Fi はインターネット用(TLE/天気の取得のみ)」という構成では、
 `netqual.bind_ip` に**有線 NIC の自 IP を 1 つ設定するだけ**で、全測定トラフィック
 (TCP スループット / UDP プローブ / 負荷・耐久試験 / 常時 RTT / inettest)が

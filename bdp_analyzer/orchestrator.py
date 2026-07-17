@@ -320,7 +320,8 @@ class Orchestrator:
                 self.netqual_server = NetqualServer(
                     d["control_port"], d["udp_port"],
                     allowed_sources=self.config.netqual.get("allowed_sources"),
-                    iperf_port=iperf_port, iperf_bin=d["iperf_bin"])
+                    iperf_port=iperf_port, iperf_bin=d["iperf_bin"],
+                    listen_ip=self.config.netqual.get("bind_ip") or "0.0.0.0")
                 self.netqual_server.start()
         elif j["kind"] == "rttmon":
             if j["thread"] is None:

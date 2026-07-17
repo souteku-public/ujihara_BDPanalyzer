@@ -221,14 +221,15 @@ class _ThreadingTCP(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 
-def _udp_echo_loop(port: int, stop: threading.Event) -> None:
+def _udp_echo_loop(port: int, stop: threading.Event,
+                   listen_ip: str = "0.0.0.0") -> None:
     global _UDP_SOCK
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("0.0.0.0", port))
+    sock.bind((listen_ip, port))
     sock.settimeout(0.5)
     _UDP_SOCK = sock
-    log.info("UDP echo listening on :%d", port)
+    log.info("UDP echo listening on %s:%d", listen_ip, port)
     while not stop.is_set():
         try:
             data, addr = sock.recvfrom(65535)
@@ -269,11 +270,13 @@ class NetqualServer:
 
     def __init__(self, control_port: int, udp_port: int,
                  allowed_sources=None, iperf_port: int = 0,
-                 iperf_bin: str = "iperf3"):
+                 iperf_bin: str = "iperf3", listen_ip: str = "0.0.0.0"):
         self.control_port = control_port
         self.udp_port = udp_port
         self.iperf_port = int(iperf_port or 0)   # 0 なら iperf3 サーバを起動しない
         self.iperf_bin = iperf_bin
+        # 待受を特定 NIC の IP に限定 (本社: 固定IP のみで応答し Wi-Fi では応答しない)
+        self.listen_ip = listen_ip or "0.0.0.0"
         set_allowed_sources(allowed_sources)
         self._stop = threading.Event()
         self._tcp: _ThreadingTCP | None = None
@@ -282,17 +285,19 @@ class NetqualServer:
 
     def start(self) -> None:
         self._stop.clear()
-        ut = threading.Thread(target=_udp_echo_loop, args=(self.udp_port, self._stop),
+        ut = threading.Thread(target=_udp_echo_loop,
+                              args=(self.udp_port, self._stop, self.listen_ip),
                               daemon=True)
         ut.start()
         self._threads.append(ut)
 
-        self._tcp = _ThreadingTCP(("0.0.0.0", self.control_port), _ControlHandler)
+        self._tcp = _ThreadingTCP((self.listen_ip, self.control_port),
+                                  _ControlHandler)
         st = threading.Thread(target=self._tcp.serve_forever, daemon=True)
         st.start()
         self._threads.append(st)
-        log.info("netqual server listening: TCP :%d / UDP :%d",
-                 self.control_port, self.udp_port)
+        log.info("netqual server listening: %s TCP:%d / UDP:%d",
+                 self.listen_ip, self.control_port, self.udp_port)
         self._start_iperf()
 
     def _start_iperf(self) -> None:
@@ -302,11 +307,13 @@ class NetqualServer:
             log.warning("iperf_port 指定だが %s が見つからないため iperf3 サーバ未起動",
                         self.iperf_bin)
             return
+        cmd = [self.iperf_bin, "-s", "-p", str(self.iperf_port)]
+        if self.listen_ip and self.listen_ip != "0.0.0.0":
+            cmd += ["-B", self.listen_ip]        # iperf3 も指定 NIC のみで待受
         try:
             self._iperf_proc = subprocess.Popen(
-                [self.iperf_bin, "-s", "-p", str(self.iperf_port)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            log.info("iperf3 サーバ起動: :%d", self.iperf_port)
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            log.info("iperf3 サーバ起動: %s:%d", self.listen_ip, self.iperf_port)
         except OSError as e:
             log.warning("iperf3 サーバ起動失敗: %s", e)
 
@@ -320,10 +327,11 @@ class NetqualServer:
 
 
 def run_server(control_port: int, udp_port: int,
-               allowed_sources=None, iperf_port: int = 0) -> None:
+               allowed_sources=None, iperf_port: int = 0,
+               listen_ip: str = "0.0.0.0") -> None:
     """フォアグラウンドで受信サーバを起動 (`receiver` サブコマンド用)."""
     srv = NetqualServer(control_port, udp_port, allowed_sources,
-                        iperf_port=iperf_port)
+                        iperf_port=iperf_port, listen_ip=listen_ip)
     srv.start()
     try:
         while not srv._stop.is_set():
@@ -346,8 +354,12 @@ def main() -> None:
                          "例: --allow 203.0.113.10/32 --allow 198.51.100.0/24")
     ap.add_argument("--iperf-port", type=int, default=0,
                     help="指定すると iperf3 サーバも起動 (例: 5201)。engine=iperf3 用")
+    ap.add_argument("--bind", default="0.0.0.0",
+                    help="待受を特定 NIC の IP に限定 (例: 有線NIC IP)。"
+                         "本社: 固定IPのみで応答し Wi-Fi では応答しない用途")
     args = ap.parse_args()
-    run_server(args.control_port, args.udp_port, args.allow, args.iperf_port)
+    run_server(args.control_port, args.udp_port, args.allow, args.iperf_port,
+               listen_ip=args.bind)
 
 
 if __name__ == "__main__":

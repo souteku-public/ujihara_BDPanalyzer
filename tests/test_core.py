@@ -802,3 +802,35 @@ def test_measurement_bind_pinning_and_validation():
                       handover={"enabled": False}, webapp={},
                       netqual={"enabled": True, "role": "sender", "targets": []})
         assert Orchestrator(cfg2)._eff_bind({"host": "x"}) is None
+
+
+def test_server_listen_bind():
+    """受信サーバの待受を特定 NIC に限定 (本社: 固定IPのみで応答, Wi-Fi不応答)."""
+    import socket
+    from bdp_analyzer.netqual.server import NetqualServer
+    from bdp_analyzer.netqual import client
+
+    srv = NetqualServer(16211, 16212, listen_ip="127.0.0.1")
+    srv.start()
+    try:
+        time.sleep(0.4)
+        s = client.measure_once("127.0.0.1", 16211, 16212, throughput_seconds=0.4,
+                                udp_probe_count=8, udp_probe_interval_ms=5,
+                                bind_ip="127.0.0.1")
+        assert s[0].throughput_bps > 0 and s[0].rtt_ms is not None
+    finally:
+        srv.stop()
+    time.sleep(0.3)
+
+    # 別の実在 IP に待受を限定すると 127.0.0.1 宛では接続不可
+    srv2 = NetqualServer(16213, 16214, listen_ip="192.0.2.2")
+    srv2.start()
+    try:
+        time.sleep(0.4)
+        try:
+            socket.create_connection(("127.0.0.1", 16213), timeout=1).close()
+            assert False, "指定NIC以外で待ち受けてしまった"
+        except OSError:
+            pass
+    finally:
+        srv2.stop()
