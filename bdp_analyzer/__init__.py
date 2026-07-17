@@ -9,4 +9,4 @@ Beam / Data-Path (BDP) Analyzer:
 パッケージは HW が無くても import / 起動できるよう、外部依存は遅延 import で扱う。
 """
 
-__version__ = "0.1.0"
+__version__ = "0.9.0"

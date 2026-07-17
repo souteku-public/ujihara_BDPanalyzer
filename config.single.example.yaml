@@ -1,0 +1,62 @@
+# ============================================================================
+# 単独端末プリセット (受信側 PC 不要)
+#   1 台を DHCP 回線 (Starlink 等) に繋ぎ、公開エンドポイントへ
+#   インターネット速度を測ってローカルのダッシュボードで見るだけの最小構成。
+#
+#   使い方:
+#     cp config.single.example.yaml config.yaml
+#     python -m bdp_analyzer monitor --config config.yaml
+#     → ブラウザで http://localhost:8080/
+# ============================================================================
+
+ground_station:
+  name: "single-terminal"
+  latitude: 35.6762        # 測定場所のおおよその緯度 (Google マップで確認)
+  longitude: 139.6503      # 経度
+  altitude_m: 40
+  elevation_mask_deg: 25
+
+storage:
+  db_path: "data/bdp.sqlite"
+
+# 電波コレクタは使わない (Starlink RF を見たい場合のみ config.example.yaml を参照)
+collectors: []
+
+# ---- インターネット速度測定 (対向 PC 不要) --------------------------------
+netqual:
+  enabled: true
+  role: "sender"           # 受信サーバは起動しない (単独端末なので不要)
+  interval_s: 60           # 60 秒ごとに測定
+  targets:
+    - label: "インターネット速度(Starlink)"
+      mode: internet        # 公開エンドポイントへ測定 (受信側不要)
+      enabled: true
+      throughput_seconds: 30 # 上り/下り各 30 秒
+      streams: 4             # 高 BDP 対策の並列接続
+  # 既定は Cloudflare。社内の別サーバを使う場合のみ上書き:
+  # internet_endpoints:
+  #   down_url: "https://speed.cloudflare.com/__down?bytes="
+  #   up_url:   "https://speed.cloudflare.com/__up"
+  #   rtt_host: "speed.cloudflare.com"
+
+# 衛星の可視状況・スカイプロット・ハンドオーバー予測も見たいので有効化
+# (インターネット到達性があれば動作。不要なら enabled: false)
+handover:
+  enabled: true
+  interval_s: 30
+  horizon_min: 15
+  constellations: ["starlink", "oneweb"]
+  tle_cache_hours: 6
+  tle_sources:
+    starlink: "https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle"
+    oneweb:   "https://celestrak.org/NORAD/elements/gp.php?GROUP=oneweb&FORMAT=tle"
+
+# 上空の天気 (降雨減衰を理論 SINR に反映)
+weather:
+  enabled: true
+  interval_s: 300
+
+webapp:
+  enabled: true
+  host: "127.0.0.1"        # この端末のブラウザからのみ表示 (外部公開しない)
+  port: 8080

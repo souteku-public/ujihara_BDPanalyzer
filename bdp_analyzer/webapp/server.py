@@ -48,7 +48,8 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
 
     @app.route("/")
     def index():
-        return render_template("dashboard.html")
+        from .. import __version__
+        return render_template("dashboard.html", version=__version__)
 
     @app.route("/viewer")
     def viewer():
