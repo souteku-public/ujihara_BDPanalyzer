@@ -414,6 +414,17 @@ weather:  { enabled: true }   # 天気取得も同様
 
 ---
 
+## 社用 PC（Python 入れられない・DHCP）での最短手順
+
+インストール不可・DHCP のみの出先 PC は、**ポータブル Python + `inettest`** で
+受信側 PC 無しに衛星回線の実効速度を測れます。手順とダブルクリック用バッチ
+（`run_field_test.bat`）は **[docs/field_pc_quickstart.md](docs/field_pc_quickstart.md)** に
+まとめてあります（要約: Windows embeddable(zip)版 Python を展開 → `bdp_analyzer`
+フォルダと `run_field_test.bat` を同じ場所に置く → バッチをダブルクリック →
+`sat_speed.csv` を別 PC の CSV ビューアで確認）。
+
+---
+
 ## 単独端末でインターネット速度を測る（受信側 PC 不要）
 
 対向 PC を用意できない場合でも、**測定端末 1 台を DHCP 回線（Starlink 等）に繋ぐだけ**で、
