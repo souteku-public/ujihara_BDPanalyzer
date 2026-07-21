@@ -202,6 +202,35 @@ python -m bdp_analyzer monitor --config config.yaml
 
 ---
 
+## シンプル計測モード（まずはこれ / 端末 1 台のグラフ表示 + CSV 記録）
+
+「端末の WebGUI を定期スクレイプして、**リアルタイムグラフ表示**しながら
+**UI のボタンで CSV 記録を開始/停止**する」ことだけに絞った軽量画面です。
+送信側/受信側や通信品質測定の概念はありません。既定 **5 秒更新**。
+
+```bash
+python -m bdp_analyzer simple --config config.yaml
+# → ブラウザ http://localhost:8080/
+```
+
+- 対象端末は config の `collectors` から **enabled の先頭** が選ばれます。
+  複数あるときは `--name kymeta-oneweb-1` のように指定。
+- 画面: SINR グラフ / アンテナ向き(方位角・仰角)グラフ / 最新値 KPI
+  (SINR・向き・周波数・接続衛星)。Starlink 端末なら遅延・障害物グラフも自動表示。
+- **「● 記録開始」ボタン**で `records/<端末名>_<日時>.csv` への追記が始まり、
+  行数と経過時間を表示。「■ 記録停止」で確定し、画面からダウンロードできます。
+- ハンドオーバー理論予測 (skyfield 導入時のみ): 接続候補衛星と
+  次のハンドオーバー予測時刻を画面上部に表示します。無ければ自動で非表示。
+- 更新間隔は `--interval 5`、ポートは `--port 8080` で変更可。
+- Starlink を測るときは config の starlink コレクタを指す
+  `--name starlink-mini-1` で**同じ画面**がそのまま使えます。
+
+> 実機の WebGUI から値が取れない (グラフが空・エラー表示) 場合は、
+> `python -m bdp_analyzer probe --config config.yaml` で正しい
+> `endpoints` / `field_map` を探索してください ([docs/devices.md](docs/devices.md))。
+
+---
+
 ## 使い方
 
 ### 推奨: 送受兼用（1 ソフトを両 PC で実行）

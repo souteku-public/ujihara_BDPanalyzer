@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ name }} — シンプル計測</title>
+<script src="/static/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#0e1420; --card:#161e2e; --line:#232c40; --fg:#e6ebf5;
+          --muted:#8b98b0; --accent:#5aa2ff; --rec:#ff5a5a; --ok:#6de3a1; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font-family:"Segoe UI","Hiragino Sans",Meiryo,sans-serif; }
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:14px;
+           padding:12px 18px; background:var(--card);
+           border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:17px; margin:0; }
+  header .sub { color:var(--muted); font-size:12px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%;
+         margin-right:5px; background:#555; vertical-align:baseline; }
+  .dot.ok { background:var(--ok); } .dot.ng { background:var(--rec); }
+  .spacer { flex:1; }
+  select { background:#0f1522; color:var(--fg); border:1px solid var(--line);
+           border-radius:6px; padding:5px 8px; }
+  /* 記録ボタン */
+  #recbtn { border:none; border-radius:8px; padding:9px 20px; font-size:14px;
+            font-weight:700; cursor:pointer; background:var(--accent); color:#0b1220; }
+  #recbtn.rec { background:var(--rec); color:#fff; }
+  #recinfo { font-size:12px; color:var(--muted); }
+  #recinfo a { color:var(--accent); }
+  @keyframes blink { 50% { opacity:.35; } }
+  .blink { animation: blink 1.2s infinite; }
+
+  main { padding:16px 18px; max-width:1200px; margin:0 auto; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+          gap:10px; margin-bottom:14px; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:10px;
+         padding:10px 12px; text-align:center; }
+  .kpi .v { font-size:22px; font-weight:700; }
+  .kpi .u { font-size:12px; color:var(--muted); }
+  .kpi .l { font-size:12px; color:var(--muted); margin-top:2px; }
+  .banner { background:var(--card); border:1px solid var(--line); border-radius:10px;
+            padding:8px 14px; margin-bottom:14px; font-size:13px; color:var(--muted); }
+  .banner b { color:var(--fg); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:12px 14px; margin-bottom:14px; }
+  .card h2 { font-size:13px; color:var(--muted); margin:0 0 8px; font-weight:600; }
+  .chartbox { position:relative; height:230px; }
+  #err { background:#3a1f26; border:1px solid #6b2f3a; color:#ffb4b4;
+         border-radius:10px; padding:9px 14px; margin-bottom:14px; font-size:13px;
+         display:none; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1><span id="livedot" class="dot"></span>{{ name }}</h1>
+    <div class="sub">{{ kind }} / {{ base_url }} — {{ interval_s|int }} 秒更新</div>
+  </div>
+  <div class="spacer"></div>
+  <label class="sub">表示期間
+    <select id="minutes">
+      <option value="15">15分</option>
+      <option value="30" selected>30分</option>
+      <option value="60">1時間</option>
+      <option value="240">4時間</option>
+    </select>
+  </label>
+  <div style="text-align:right">
+    <button id="recbtn" onclick="toggleRec()">● 記録開始</button>
+    <div id="recinfo"></div>
+  </div>
+</header>
+
+<main>
+  <div id="err"></div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="banner" id="hoBanner" style="display:none"></div>
+
+  <div class="card">
+    <h2>SINR (dB)</h2>
+    <div class="chartbox"><canvas id="cSinr"></canvas></div>
+  </div>
+  <div class="card">
+    <h2>アンテナ向き (方位角 / 仰角)</h2>
+    <div class="chartbox"><canvas id="cPoint"></canvas></div>
+  </div>
+  <div class="card" id="cardExtra" style="display:none">
+    <h2>端末遅延 (ms) / 障害物 (%)</h2>
+    <div class="chartbox"><canvas id="cExtra"></canvas></div>
+  </div>
+</main>
+
+<script>
+const INTERVAL_MS = Math.max({{ interval_s|int }} * 1000, 2000);
+const $ = s => document.querySelector(s);
+const getJSON = async u => (await fetch(u)).json();
+
+const fmt = (v, d=1) => v==null ? '—' : Number(v).toFixed(d);
+const tlabel = v => new Date(v).toLocaleTimeString('ja-JP',
+                    {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+// ---- KPI ------------------------------------------------------------------
+const KPI_DEFS = [
+  ['sinr_db',        'SINR', 'dB', 1],
+  ['azimuth_deg',    '方位角', '°', 0],
+  ['elevation_deg',  '仰角', '°', 0],
+  ['tx_freq_mhz',    'TX周波数', 'MHz', 0],
+  ['rx_freq_mhz',    'RX周波数', 'MHz', 0],
+  ['satellite_id',   '接続衛星', '', null],
+  ['latency_ms',     '端末遅延', 'ms', 0],
+  ['obstruction_pct','障害物', '%', 1],
+];
+function renderKpis(last) {
+  $('#kpis').innerHTML = KPI_DEFS.map(([k, label, unit, dec]) => {
+    const raw = last ? last[k] : null;
+    const v = dec==null ? (raw ?? '—') : fmt(raw, dec);
+    return `<div class="kpi"><div class="v">${v}<span class="u"> ${unit}</span></div>
+            <div class="l">${label}</div></div>`;
+  }).join('');
+}
+
+// ---- グラフ -----------------------------------------------------------------
+const baseOpts = axes => ({
+  responsive:true, maintainAspectRatio:false, animation:false,
+  interaction:{mode:'index', intersect:false},
+  scales:{
+    x:{ type:'linear', ticks:{color:'#8b98b0', maxTicksLimit:8, callback:tlabel},
+        grid:{color:'#232c40'} },
+    y:{ position:'left', title:{display:true, text:axes[0], color:'#8b98b0'},
+        ticks:{color:'#8b98b0'}, grid:{color:'#232c40'} },
+    ...(axes[1] ? { y1:{ position:'right',
+        title:{display:true, text:axes[1], color:'#8b98b0'},
+        ticks:{color:'#8b98b0'}, grid:{drawOnChartArea:false} } } : {}) },
+  plugins:{ legend:{labels:{color:'#e6ebf5'}} },
+});
+const mkChart = (id, axes) => new Chart($(id), {type:'line',
+  data:{datasets:[]}, options: baseOpts(axes)});
+
+const chSinr  = mkChart('#cSinr',  ['dB']);
+const chPoint = mkChart('#cPoint', ['方位角 (°)', '仰角 (°)']);
+const chExtra = mkChart('#cExtra', ['ms', '%']);
+
+const pts = (rows, k) => rows.filter(r => r[k] != null)
+                             .map(r => ({x:r.ts*1000, y:r[k]}));
+function setData(ch, dsets) {
+  ch.data.datasets = dsets.filter(d => d.data.length);
+  ch.update('none');
+}
+
+// ---- 記録 -------------------------------------------------------------------
+let recActive = false;
+async function toggleRec() {
+  const r = await fetch('/api/simple/record', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action: recActive ? 'stop' : 'start'})});
+  renderRec(await r.json());
+}
+function renderRec(rec) {
+  recActive = rec.active;
+  const b = $('#recbtn');
+  b.textContent = recActive ? '■ 記録停止' : '● 記録開始';
+  b.classList.toggle('rec', recActive);
+  b.classList.toggle('blink', recActive);
+  let info = '';
+  if (recActive) {
+    const sec = Math.round(Date.now()/1000 - rec.started_ts);
+    info = `${rec.path} — ${rec.rows} 行 / ${Math.floor(sec/60)}分${sec%60}秒`;
+  } else if (rec.last_path) {
+    info = `前回: ${rec.last_path} <a href="/record.csv">ダウンロード</a>`;
+  }
+  $('#recinfo').innerHTML = info;
+}
+
+// ---- ハンドオーバー -----------------------------------------------------------
+function renderHo(st) {
+  const ho = st.handover || {};
+  const el = $('#hoBanner');
+  if (!st.constellation || (!ho.serving && !ho.next && !ho.error)) {
+    el.style.display = 'none'; return;
+  }
+  let html = `<b>${st.constellation}</b> `;
+  if (ho.error) {
+    html += `— ${ho.error}`;
+  } else {
+    if (ho.serving) {
+      html += `接続候補衛星 (理論): <b>${ho.serving.satellite || '—'}</b>
+               (仰角 ${fmt(ho.serving.elevation_deg,0)}° / 可視 ${ho.serving.visible_count ?? 0} 機)`;
+    }
+    if (ho.next) {
+      const lead = Math.max(0, Math.round(ho.next.ts - Date.now()/1000));
+      html += ` ／ 次のハンドオーバー予測: <b>${Math.floor(lead/60)}分${lead%60}秒後</b>
+               → ${ho.next.to_sat || '(圏外)'}`;
+    }
+  }
+  el.innerHTML = html; el.style.display = '';
+}
+
+// ---- メインループ --------------------------------------------------------------
+async function refresh() {
+  try {
+    const [st, rows] = await Promise.all([
+      getJSON('/api/simple/status'),
+      getJSON(`/api/simple/series?minutes=${$('#minutes').value}`)]);
+
+    const fresh = st.last_ts && (Date.now()/1000 - st.last_ts) < st.interval_s*3;
+    $('#livedot').className = 'dot ' + (fresh ? 'ok' : 'ng');
+    const err = $('#err');
+    if (st.last_error && !fresh) {
+      err.textContent = '取得エラー: ' + st.last_error; err.style.display = '';
+    } else { err.style.display = 'none'; }
+
+    renderKpis(rows[rows.length-1]);
+    renderRec(st.recording);
+    renderHo(st);
+
+    setData(chSinr, [
+      {label:'SINR', data:pts(rows,'sinr_db'), borderColor:'#ffb454',
+       backgroundColor:'#ffb45422', fill:true, tension:.25, pointRadius:0},
+      {label:'RSSI (dBm)', data:pts(rows,'rssi_dbm'), borderColor:'#b18cff',
+       tension:.25, pointRadius:0, hidden:true},
+    ]);
+    setData(chPoint, [
+      {label:'方位角', yAxisID:'y', data:pts(rows,'azimuth_deg'),
+       borderColor:'#5aa2ff', tension:.25, pointRadius:0},
+      {label:'仰角', yAxisID:'y1', data:pts(rows,'elevation_deg'),
+       borderColor:'#6de3a1', tension:.25, pointRadius:0},
+    ]);
+    const extra = [
+      {label:'端末遅延', yAxisID:'y', data:pts(rows,'latency_ms'),
+       borderColor:'#5aa2ff', tension:.25, pointRadius:0},
+      {label:'障害物', yAxisID:'y1', data:pts(rows,'obstruction_pct'),
+       borderColor:'#ff7a7a', tension:.25, pointRadius:0},
+    ].filter(d => d.data.length);
+    $('#cardExtra').style.display = extra.length ? '' : 'none';
+    if (extra.length) setData(chExtra, extra);
+  } catch (e) {
+    $('#err').textContent = 'サーバに接続できません: ' + e;
+    $('#err').style.display = '';
+  }
+}
+$('#minutes').onchange = refresh;
+refresh();
+setInterval(refresh, INTERVAL_MS);
+</script>
+</body>
+</html>

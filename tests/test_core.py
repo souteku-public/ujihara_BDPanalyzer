@@ -780,6 +780,79 @@ def test_inetspeed_single_terminal():
         srv.shutdown()
 
 
+def test_simple_app_poll_graph_and_csv_record():
+    """シンプル計測: 5秒ポーリング相当 + UI からの CSV 記録開始/停止."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from bdp_analyzer.simpleapp.server import SimpleMonitor, create_simple_app
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            body = json.dumps({
+                "rf": {"sinr": 12.5, "tx_frequency_mhz": 14250,
+                       "rx_frequency_mhz": 11700},
+                "pointing": {"azimuth": 181.0, "elevation": 42.0},
+                "network": {"satellite": "OW-0042"}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    with tempfile.TemporaryDirectory() as d:
+        mon = SimpleMonitor(
+            {"name": "kymeta-test", "kind": "kymeta",
+             "base_url": f"http://127.0.0.1:{port}",
+             "endpoints": {"status_json": "/api/status"},
+             "field_map": {"sinr_db": "rf.sinr",
+                           "azimuth_deg": "pointing.azimuth",
+                           "elevation_deg": "pointing.elevation",
+                           "tx_freq_mhz": "rf.tx_frequency_mhz",
+                           "satellite_id": "network.satellite"}},
+            interval_s=0.5, records_dir=os.path.join(d, "records"))
+        mon.start()
+        try:
+            c = create_simple_app(mon).test_client()
+            time.sleep(1.5)
+            # ステータス / 時系列 (グラフ用データ) が取れている
+            st = c.get("/api/simple/status").get_json()
+            assert st["name"] == "kymeta-test" and st["last_ts"] is not None
+            rows = c.get("/api/simple/series?minutes=5").get_json()
+            assert rows and rows[-1]["sinr_db"] == 12.5
+            assert rows[-1]["satellite_id"] == "OW-0042"
+
+            # 記録開始 → 行が増える → 停止でファイル確定
+            rec = c.post("/api/simple/record",
+                         json={"action": "start"}).get_json()
+            assert rec["active"] and rec["path"]
+            time.sleep(1.6)
+            rec2 = c.get("/api/simple/status").get_json()["recording"]
+            assert rec2["rows"] >= 2
+            rec3 = c.post("/api/simple/record",
+                          json={"action": "stop"}).get_json()
+            assert not rec3["active"] and rec3["last_path"]
+            lines = open(rec3["last_path"],
+                         encoding="utf-8-sig").read().splitlines()
+            assert lines[0].startswith("ts,time_iso,sinr_db")
+            assert len(lines) >= 3
+            assert "12.5" in lines[1] and "OW-0042" in lines[1]
+            # 記録 CSV をダウンロードできる
+            dl = c.get("/record.csv")
+            assert dl.status_code == 200
+        finally:
+            mon.stop()
+            srv.shutdown()
+
+
 def test_webgui_probe_discovers_endpoint_and_fields():
     """probe: 実機 WebGUI を探索し endpoints/field_map を自動提案できる."""
     import json

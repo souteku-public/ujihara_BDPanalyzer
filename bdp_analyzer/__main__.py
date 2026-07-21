@@ -137,6 +137,42 @@ def cmd_inettest(args) -> None:
         time.sleep(args.interval)
 
 
+def cmd_simple(args) -> None:
+    """シンプル計測: 端末 1 台をポーリングしグラフ表示 + UI から CSV 記録."""
+    import os
+    from .config import load_config
+    from .simpleapp.server import SimpleMonitor, run
+
+    cfg = load_config(args.config)
+    cols = cfg.collectors or []
+    if args.name:
+        cols = [c for c in cols if c.get("name") == args.name]
+    else:
+        enabled = [c for c in cols if c.get("enabled")]
+        cols = enabled or cols
+    if not cols:
+        names = ", ".join(c.get("name", "?") for c in cfg.collectors or [])
+        print("対象コレクタが見つかりません。--name で指定してください。"
+              f" (config 内: {names or 'なし'})")
+        return
+    col = cols[0]
+    print(f"対象端末: {col.get('name')} ({col.get('kind')}) "
+          f"{col.get('base_url') or col.get('address', '')}")
+
+    mon = SimpleMonitor(
+        col, interval_s=args.interval, records_dir=args.records_dir,
+        handover_cfg=cfg.handover, ground_station=cfg.ground_station,
+        tle_cache_dir=os.path.join(os.path.dirname(cfg.db_path) or ".", "tle"))
+    mon.start()
+    logging.getLogger("bdp").info("シンプル計測 UI: http://localhost:%d/", args.port)
+    try:
+        run(mon, args.host, args.port)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        mon.stop()
+
+
 def cmd_probe(args) -> None:
     """実機 WebGUI を探索し、endpoints/field_map の推奨値を提示する."""
     from .collectors.probe import WebGuiProber, format_report
@@ -238,6 +274,18 @@ def main() -> None:
     it.add_argument("--loop", action="store_true")
     it.add_argument("--interval", type=float, default=60)
     it.set_defaults(func=cmd_inettest)
+
+    sp = sub.add_parser("simple",
+                        help="シンプル計測: 1 端末をグラフ表示 + UI から CSV 記録")
+    sp.add_argument("--config", default="config.yaml")
+    sp.add_argument("--name", help="config 内の対象コレクタ名 (既定: enabled の先頭)")
+    sp.add_argument("--interval", type=float, default=5,
+                    help="ポーリング間隔 秒 (既定: 5)")
+    sp.add_argument("--records-dir", default="records",
+                    help="CSV 記録の保存先フォルダ (既定: records/)")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=8080)
+    sp.set_defaults(func=cmd_simple)
 
     pr = sub.add_parser("probe",
                         help="実機 WebGUI を探索し endpoints/field_map を提案")
