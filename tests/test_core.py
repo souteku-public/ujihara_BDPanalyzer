@@ -780,6 +780,45 @@ def test_inetspeed_single_terminal():
         srv.shutdown()
 
 
+def test_add_internet_target_via_api():
+    """UI から受信側PC不要の『インターネット速度』測定先を追加できる (host 不要)."""
+    from bdp_analyzer.config import Config, GroundStation
+    from bdp_analyzer.orchestrator import Orchestrator
+    from bdp_analyzer.webapp.server import create_app
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(raw={}, ground_station=GroundStation(),
+                     db_path=os.path.join(d, "t.sqlite"), collectors=[],
+                     handover={"enabled": False}, webapp={},
+                     netqual={"enabled": True, "role": "sender", "targets": []})
+        orch = Orchestrator(cfg)
+        orch.start()
+        try:
+            c = create_app(orch.storage, orch).test_client()
+            # host なし・mode:internet で追加できる
+            r = c.post("/api/targets", json={"label": "OneWeb経由",
+                                             "mode": "internet", "streams": 4})
+            assert r.get_json()["ok"]
+            jobs = {j["id"]: j for j in orch.jobs_status()}
+            assert "net:OneWeb経由" in jobs
+            # 公開速度測定に RTT モニタは付かない
+            assert not any(j.startswith("rttmon:") for j in jobs)
+            # host 無し・mode 無しは従来通り拒否される
+            bad = c.post("/api/targets", json={"label": "x"})
+            assert bad.status_code == 400
+        finally:
+            orch.stop()
+
+        # 再起動後も mode:internet の測定先が復元される
+        orch2 = Orchestrator(cfg)
+        orch2.start()
+        try:
+            j2 = {j["id"]: j for j in orch2.jobs_status()}
+            assert "net:OneWeb経由" in j2
+        finally:
+            orch2.stop()
+
+
 def test_measurement_bind_pinning_and_validation():
     """有線固定: グローバル bind_ip が全測定に既定適用され、個別が優先される."""
     from bdp_analyzer.config import Config, GroundStation

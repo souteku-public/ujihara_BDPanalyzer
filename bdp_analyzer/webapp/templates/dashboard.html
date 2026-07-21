@@ -50,6 +50,10 @@
     .switch input:checked + .sl:before { transform:translateX(18px); background:#fff; }
     .addform { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
     .addform input { flex:1; min-width:120px; }
+    .addform input:disabled { opacity:.4; }
+    .inetopt { display:flex; align-items:center; gap:5px; font-size:12px;
+               color:var(--muted); white-space:nowrap; }
+    .inetopt input { flex:none; min-width:0; }
     .addform button { background:var(--accent); color:#0b1220; border:none;
                       border-radius:6px; padding:6px 12px; font-weight:600; cursor:pointer; }
     .hint { color:var(--muted); font-size:12px; margin-top:8px; line-height:1.5; }
@@ -96,15 +100,20 @@
       <h2>計測コントロール</h2>
       <div id="jobs"></div>
       <div class="addform">
-        <input id="tLabel" placeholder="ラベル (例: 社内LAN / Wi-Fi)">
+        <input id="tLabel" placeholder="ラベル (例: 社内LAN / OneWeb経由)">
         <input id="tHost" placeholder="相手ホスト (IPアドレス)">
         <input id="tBind" list="bindips" placeholder="送信元IP (マルチNIC時のみ)">
         <datalist id="bindips"></datalist>
+        <label class="inetopt"><input type="checkbox" id="tInet"
+          onchange="onInetToggle()"> インターネット速度 (受信側PC不要)</label>
         <button onclick="addTarget()">＋ 測定先を追加</button>
       </div>
       <div class="hint">
-        Ether / Wi-Fi など衛星なしの品質チェック: 相手 PC で
-        <code>python -m bdp_analyzer receiver</code> を起動し、その IP を上で追加。
+        <b>対向PCへ測る</b>: 相手 PC で <code>python -m bdp_analyzer receiver</code> を
+        起動し、その IP を「相手ホスト」に入力して追加 (Ether/Wi-Fi の品質チェックも同様)。<br>
+        <b>受信側PCなしで回線速度を測る</b> (Starlink / OneWeb 等の実効速度):
+        「インターネット速度」に✔を入れ、ラベルだけ付けて追加。公開エンドポイント
+        (Cloudflare) へ上り/下りを測ります。相手ホストは不要です。<br>
         <b>複数回線を同時に測る場合</b>は「送信元IP」に使いたいアダプタの IP を指定
         (候補はネットワーク情報パネルのアダプタ一覧から選択可)。
         トグルの ON/OFF は即時反映され、再起動後も保持されます。
@@ -672,16 +681,29 @@ async function toggleJob(id, enabled) {
   refreshJobs();
 }
 
+// 「インターネット速度」チェック時は相手ホスト欄を無効化 (受信側PC不要のため)
+function onInetToggle() {
+  const inet = $('#tInet').checked;
+  $('#tHost').disabled = inet;
+  if (inet) $('#tHost').value = '';
+  $('#tHost').placeholder = inet ? '不要 (公開CDNへ測定)' : '相手ホスト (IPアドレス)';
+}
+
 async function addTarget() {
   const label = $('#tLabel').value.trim(), host = $('#tHost').value.trim();
-  const bind = $('#tBind').value.trim();
-  if (!host) { alert('相手ホスト (IP) を入力してください'); return; }
+  const bind = $('#tBind').value.trim(), inet = $('#tInet').checked;
+  if (inet && !label) { alert('ラベル (例: OneWeb経由) を入力してください'); return; }
+  if (!inet && !host) { alert('相手ホスト (IP) を入力してください'); return; }
+  const payload = inet
+    ? {label, mode:'internet', streams:4, bind_ip: bind || null}
+    : {label: label || host, host, bind_ip: bind || null};
   const r = await fetch('/api/targets', { method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({label: label || host, host, bind_ip: bind || null}) });
+    body:JSON.stringify(payload) });
   const body = await r.json();
   if (!body.ok) { alert('追加できません: ' + (body.error||'')); return; }
   $('#tLabel').value = ''; $('#tHost').value = ''; $('#tBind').value = '';
+  $('#tInet').checked = false; onInetToggle();
   refreshJobs();
 }
 

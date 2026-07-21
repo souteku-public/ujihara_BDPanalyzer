@@ -126,11 +126,15 @@ def create_app(storage: Storage, orchestrator=None) -> Flask:
         if orchestrator is None:
             return jsonify({"ok": False, "error": "orchestrator なし"}), 400
         body = request.get_json(force=True, silent=True) or {}
+        mode = (body.get("mode") or "").strip() or None
         job_id = orchestrator.add_net_target(
             body.get("label", ""), body.get("host", ""),
+            mode=mode,
             control_port=body.get("control_port"),
             udp_port=body.get("udp_port"),
             interval_s=body.get("interval_s"),
+            throughput_seconds=body.get("throughput_seconds"),
+            streams=body.get("streams"),
             bind_ip=(body.get("bind_ip") or "").strip() or None)
         if job_id is None:
             return jsonify({"ok": False,

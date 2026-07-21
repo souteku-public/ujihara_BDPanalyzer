@@ -446,28 +446,35 @@ class Orchestrator:
             detail=f"→ {meta.get('host')} (1秒解像度)", meta=meta)
 
     def add_net_target(self, label: str, host: str, *, enabled: bool = True,
-                       rtt_enabled: bool = False, **overrides) -> Optional[str]:
-        """UI から測定先を追加 (Ether/Wi-Fi チェック等)。job_id を返す."""
+                       rtt_enabled: bool = False, mode: Optional[str] = None,
+                       **overrides) -> Optional[str]:
+        """UI から測定先を追加 (Ether/Wi-Fi チェック / インターネット速度)。job_id を返す."""
         label = (label or host).strip()
         host = host.strip()
-        if not host:
+        # mode: internet は受信側 PC 不要 (公開エンドポイントへ測定) のため host 任意。
+        if mode == "internet":
+            label = label or "インターネット速度"
+        elif not host:
             return None
         slug = _slug(label)
         job_id = f"net:{slug}"
         with self._lock:
             if job_id in self.jobs:
                 return None  # 同名は不可
-            meta = {"label": label, "host": host, **{
+            meta = {"label": label, **({"mode": mode} if mode else {}),
+                    **({"host": host} if host else {}), **{
                 k: v for k, v in overrides.items() if v is not None}}
             d = self._net_defaults()
-            detail = f"→ {host}" + (
+            detail = ("インターネット速度 (公開CDN)" if mode == "internet"
+                      else f"→ {host}") + (
                 f" (src {meta['bind_ip']})" if meta.get("bind_ip") else "")
             self._register(
                 job_id, label=label, kind="net",
                 interval_s=float(meta.get("interval_s", d["interval_s"])),
                 fn=lambda t=meta: self._net_job(t),
                 enabled=enabled, removable=True, detail=detail, meta=meta)
-            self._register_rttmon(slug, meta, rtt_enabled, removable=True)
+            if mode != "internet":   # 公開速度測定に RTT モニタは不適 (host 無し)
+                self._register_rttmon(slug, meta, rtt_enabled, removable=True)
             self._save_state()
         return job_id
 
