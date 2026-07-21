@@ -780,6 +780,59 @@ def test_inetspeed_single_terminal():
         srv.shutdown()
 
 
+def test_webgui_probe_discovers_endpoint_and_fields():
+    """probe: 実機 WebGUI を探索し endpoints/field_map を自動提案できる."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from bdp_analyzer.collectors.probe import WebGuiProber
+
+    HTML = ('<html><body><script src="/main.js"></script>'
+            '<script>fetch("/api/modem/status").then(r=>r.json())</script>'
+            '</body></html>')
+    STATUS = {"rf": {"sinr": 12.4, "rx_frequency": 11700.0,
+                     "tx_frequency": 14250.0},
+              "pointing": {"elevation": 41.2, "azimuth": 183.5},
+              "network": {"satellite": "OW-0231"}}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            p = self.path.split("?")[0]
+            if p == "/":
+                body, ct = HTML.encode(), "text/html"
+            elif p == "/main.js":
+                body, ct = b'var u="/api/rf";', "application/javascript"
+            elif p == "/api/modem/status":
+                body, ct = json.dumps(STATUS).encode(), "application/json"
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        rep = WebGuiProber(f"http://127.0.0.1:{port}").run()
+        assert rep["suggest"]["status_json"] == "/api/modem/status"
+        fm = rep["suggest"]["field_map"]
+        assert fm["sinr_db"] == "rf.sinr"
+        assert fm["elevation_deg"] == "pointing.elevation"
+        assert fm["azimuth_deg"] == "pointing.azimuth"
+        assert fm["satellite_id"] == "network.satellite"
+    finally:
+        srv.shutdown()
+
+
 def test_add_internet_target_via_api():
     """UI から受信側PC不要の『インターネット速度』測定先を追加できる (host 不要)."""
     from bdp_analyzer.config import Config, GroundStation

@@ -72,6 +72,21 @@ Kymeta u8 / Osprey は端末 IP の **HTTPS WebGUI** を持ち、Status ペー�
 ```
 
 ### field_map の調べ方
+
+**まず `probe` コマンドで自動探索するのが簡単です**（実機に到達できる PC で実行）:
+
+```bash
+python -m bdp_analyzer probe --config config.yaml
+#   または接続情報を直接指定:
+python -m bdp_analyzer probe --url https://192.168.44.2 --user admin --password ****
+```
+
+`probe` は端末のトップページと参照 JS から API/JSON の URL 候補を抽出し、定番候補と
+合わせて順にアクセスして、**JSON を返すエンドポイントと RF らしきキー一覧**を表示し、
+`endpoints.status_json` と `field_map` の**推奨値をそのまま貼れる形**で出力します。
+その内容を `config.yaml` の当該コレクタに反映してください。
+
+自動で決まらない場合は手動で:
 1. WebGUI を Firefox で開き、開発者ツール → Network を確認。
 2. Status ページが裏で JSON API を叩いていれば、その URL を `status_json` に、
    JSON のキー階層（`a.b.c`）を `field_map` の値に設定（推奨・堅牢）。
@@ -81,6 +96,7 @@ Kymeta u8 / Osprey は端末 IP の **HTTPS WebGUI** を持ち、Status ペー�
 
 > 機種・ファームで DOM/API が異なるため、マッピングは実機合わせが前提です。
 > 本体コードは変更不要で、`config.yaml` の調整だけで対応できます。
+> RF 値が 1 つも取れないと起動ログに `probe` を促す警告が 1 度出ます。
 
 ---
 

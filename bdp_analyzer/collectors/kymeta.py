@@ -48,6 +48,7 @@ class KymetaCollector(Collector):
         self.endpoints = cfg.get("endpoints", {}) or {}
         self.field_map: Dict[str, str] = cfg.get("field_map", {}) or {}
 
+        self._warned_empty = False   # 「値ゼロ」ヒントは 1 回だけ出す
         self.session = requests.Session()
         user, pw = cfg.get("username"), cfg.get("password")
         if user is not None:
@@ -118,6 +119,14 @@ class KymetaCollector(Collector):
                 values = self._from_html(html)
 
         if not values:
+            if not self._warned_empty:
+                self._warned_empty = True
+                log.warning(
+                    "[%s] WebGUI から RF 値を 1 つも抽出できませんでした。"
+                    "endpoints/field_map が実機と不一致の可能性大です。"
+                    "次で実機の正しい設定を探索できます:\n"
+                    "    python -m bdp_analyzer probe --config config.yaml",
+                    self.name)
             return None
 
         return RFSample(ts=now, source=self.name, kind=self.kind, raw=raw, **values)

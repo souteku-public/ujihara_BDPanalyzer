@@ -137,6 +137,38 @@ def cmd_inettest(args) -> None:
         time.sleep(args.interval)
 
 
+def cmd_probe(args) -> None:
+    """実機 WebGUI を探索し、endpoints/field_map の推奨値を提示する."""
+    from .collectors.probe import WebGuiProber, format_report
+
+    base = args.url
+    user, pw, verify = args.user, args.password, args.verify_tls
+    if not base and args.config:
+        # config.yaml の該当コレクタから接続情報を流用
+        from .config import load_config
+        cfg = load_config(args.config)
+        cols = [c for c in cfg.collectors
+                if c.get("kind") in ("kymeta", "intellian")
+                and (args.name is None or c.get("name") == args.name)]
+        if not cols:
+            print("config に kymeta/intellian コレクタが見つかりません。"
+                  "--url で直接指定してください。")
+            return
+        c = cols[0]
+        base = c.get("base_url")
+        user = user or c.get("username")
+        pw = pw if pw is not None else c.get("password")
+        verify = c.get("verify_tls", False) if not args.verify_tls else True
+        print(f"config のコレクタ '{c.get('name')}' の接続情報を使用します。")
+    if not base:
+        print("--url または --config を指定してください。")
+        return
+
+    print(f"探索中… {base} (数十秒かかることがあります)\n")
+    prober = WebGuiProber(base, username=user, password=pw, verify_tls=verify)
+    print(format_report(prober.run()))
+
+
 def cmd_predict(args) -> None:
     import os
     from .config import load_config
@@ -206,6 +238,19 @@ def main() -> None:
     it.add_argument("--loop", action="store_true")
     it.add_argument("--interval", type=float, default=60)
     it.set_defaults(func=cmd_inettest)
+
+    pr = sub.add_parser("probe",
+                        help="実機 WebGUI を探索し endpoints/field_map を提案")
+    pr.add_argument("--config", default="config.yaml",
+                    help="接続情報を流用する config (既定: config.yaml)")
+    pr.add_argument("--name", help="config 内の対象コレクタ名 (複数ある場合)")
+    pr.add_argument("--url", help="直接指定する WebGUI のベース URL "
+                                  "(例: https://192.168.44.2)")
+    pr.add_argument("--user", help="Basic 認証ユーザ (未指定なら config)")
+    pr.add_argument("--password", help="Basic 認証パスワード (未指定なら config)")
+    pr.add_argument("--verify-tls", action="store_true",
+                    help="TLS 証明書を検証する (既定: 検証しない)")
+    pr.set_defaults(func=cmd_probe)
 
     p = sub.add_parser("predict", help="ハンドオーバー予測 単発表示")
     p.add_argument("--config", default="config.yaml")
