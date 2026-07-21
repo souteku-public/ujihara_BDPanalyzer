@@ -446,6 +446,23 @@ python -m bdp_analyzer inettest --seconds 30 --streams 4 --loop --interval 60 --
 > 通常は衛星区間がボトルネックのため良い近似になります。厳密な区間分離が必要なら
 > 対向 PC（固定 IP 受信側）方式を併用してください。
 
+### OneWeb 単体を 1 台で測る（回線速度＋RF＋衛星予測）
+
+OneWeb 端末（Kymeta / Intellian）に **PC 1 台**を繋ぎ、回線速度・端末の RF 情報
+（SINR・向き・周波数）・OneWeb 衛星の可視状況/次ハンドオーバー/理論 SINR・天気を
+まとめて測定・表示できる**専用プリセット** `config.oneweb.example.yaml` を同梱しています。
+
+```bash
+cp config.oneweb.example.yaml config.yaml
+# config.yaml の Kymeta(または Intellian) の IP・認証を実機に合わせる
+python -m bdp_analyzer monitor --config config.yaml
+# → ブラウザ http://localhost:8080/?view=oneweb
+```
+
+- 回線速度は受信側 PC 不要（`mode: internet` で公開エンドポイントへ測定）。
+- RF 情報の取得には（stdlib のみの `inettest` ではなく）`monitor` 一式の導入と、
+  端末管理 IP への到達性が必要です。詳細は下記「機器ごとの接続情報の取得」を参照。
+
 ---
 
 ## 送信 PC に何もインストールできない場合（社用 PC など）

@@ -1,0 +1,102 @@
+# ============================================================================
+# OneWeb 単体プリセット (受信側 PC 不要・1 台で完結)
+#   1 台の PC を OneWeb 端末(Kymeta または Intellian)の LAN に繋ぎ、
+#     - OneWeb 回線の実効速度 (公開エンドポイントへ inettest)
+#     - 端末の RF 情報 (SINR・向き・周波数など)
+#     - OneWeb 衛星の可視状況 / 次のハンドオーバー予測 / 理論 SINR
+#     - 上空の天気 (降雨減衰を理論値に反映)
+#   をまとめて測定・表示する。
+#
+#   使い方:
+#     cp config.oneweb.example.yaml config.yaml
+#     (config.yaml の Kymeta/Intellian の IP・認証を実機に合わせる)
+#     python -m bdp_analyzer monitor --config config.yaml
+#     → ブラウザ http://localhost:8080/?view=oneweb
+# ============================================================================
+
+ground_station:
+  name: "oneweb-site"
+  latitude: 35.6762        # 測定場所のおおよその緯度
+  longitude: 139.6503      # 経度
+  altitude_m: 40
+  elevation_mask_deg: 25
+
+storage:
+  db_path: "data/bdp.sqlite"
+
+# ---- OneWeb 端末の RF 情報 --------------------------------------------------
+# Kymeta を使う場合 (HTTPS WebGUI をスクレイプ)。Intellian の場合は下の例に差し替え。
+collectors:
+  - name: "kymeta-oneweb-1"
+    kind: "kymeta"
+    enabled: true
+    base_url: "https://192.168.1.50"    # ← Kymeta 端末 WebGUI の IP に変更
+    verify_tls: false
+    username: "admin"
+    password: "CHANGE_ME"               # ← 実機の認証情報
+    interval_s: 10
+    endpoints:
+      status_json: "/api/status"         # 内部 JSON API があれば (無ければ HTML)
+    field_map:                           # ← 実機の画面/APIに合わせて調整 (docs/devices.md)
+      sinr_db: "rf.sinr"
+      azimuth_deg: "pointing.azimuth"
+      elevation_deg: "pointing.elevation"
+      tx_freq_mhz: "rf.tx_frequency_mhz"
+      rx_freq_mhz: "rf.rx_frequency_mhz"
+      satellite_id: "network.satellite"
+  # --- Intellian を使う場合はこちら (Kymeta 側を enabled:false にする) ---
+  # - name: "intellian-oneweb-1"
+  #   kind: "intellian"
+  #   enabled: true
+  #   base_url: "https://192.168.100.1"   # ← Intellian LUI の IP
+  #   verify_tls: false
+  #   interval_s: 10
+  #   snmp:
+  #     enabled: true
+  #     host: "192.168.100.1"
+  #     community: "public"
+  #     oids: { sinr_db: "1.3.6.1.4.1.XXXXX.1", elevation_deg: "1.3.6.1.4.1.XXXXX.2" }
+
+# ---- OneWeb 回線の実効速度 (受信側 PC 不要) --------------------------------
+netqual:
+  enabled: true
+  role: "sender"           # 受信サーバは不要 (公開エンドポイントへ測定)
+  interval_s: 60
+  targets:
+    - label: "OneWeb経由"
+      mode: internet        # 公開エンドポイント (Cloudflare) へ上り/下り測定
+      enabled: true
+      throughput_seconds: 20
+      streams: 4
+
+# ---- OneWeb 衛星のみを予測 (スカイプロット/次HO/理論SINR) -------------------
+handover:
+  enabled: true
+  interval_s: 30
+  horizon_min: 15
+  constellations: ["oneweb"]     # OneWeb だけを対象にする
+  tle_cache_hours: 6
+  tle_sources:
+    oneweb: "https://celestrak.org/NORAD/elements/gp.php?GROUP=oneweb&FORMAT=tle"
+
+# 理論 SINR (実測 SINR との対比・降雨減衰反映)
+sinr_model:
+  enabled: true
+  use_weather: true
+  oneweb:
+    freq_ghz: 11.7
+    eirp_dbw: 34.0
+    gt_dbk: 10.0
+    bandwidth_mhz: 250
+    losses_db: 1.0
+    atmos_zenith_db: 0.5
+    rain_height_km: 4.5
+
+weather:
+  enabled: true
+  interval_s: 300
+
+webapp:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8080
